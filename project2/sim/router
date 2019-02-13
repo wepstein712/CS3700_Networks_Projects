@@ -1,0 +1,282 @@
+#!/usr/bin/env python
+
+import argparse, socket, time, json, select, struct, math 
+from socket import socket, SOCK_SEQPACKET, AF_UNIX
+
+DEBUG = True
+#DEBUG = False
+
+parser = argparse.ArgumentParser(description='route packets')
+parser.add_argument('networks', metavar='networks', type=str, nargs='+', help="networks")
+args = parser.parse_args()
+
+##########################################################################################
+
+# Message Fields
+TYPE = "type"
+SRCE = "src"
+DEST = "dst"
+MESG = "msg"
+TABL = "table"
+
+# Message Types
+DATA = "data"
+DUMP = "dump"
+UPDT = "update"
+RVKE = "revoke"
+NRTE = "no route"
+
+# Update Message Fields
+NTWK = "network"
+NMSK = "netmask"
+ORIG = "origin"
+LPRF = "localpref"
+APTH = "ASPath"
+SORG = "selfOrigin"
+
+# internal route info
+CUST = "cust"
+PEER = "peer"
+PROV = "prov"
+
+
+##########################################################################################
+
+class Router:
+
+    routes = None
+    updates = None
+    relations = None
+    sockets = None
+
+    def __init__(self, networks):
+        print ("%%%%%%%%%%%%%%%%%%%\n\n", networks, '\n')
+        self.routes = {}
+        self.updates = {}
+        self.relations = {}
+        self.sockets = {}
+        for relationship in networks:
+            network, relation = relationship.split("-")
+            if DEBUG: 
+                print "Starting socket for", network, relation
+            self.sockets[network] = socket(AF_UNIX, SOCK_SEQPACKET)
+            self.sockets[network].setblocking(0)
+            self.sockets[network].connect(network)
+            self.relations[network] = relation
+        return
+
+    def addressInNetwork(self,ipa,neta,maska):
+   	"Is an address in a network"
+   	#TODO	
+	count = 0
+	ip = ipa.split('.')
+	ipaddr = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(int(ip[0]),int(ip[1]),int(ip[2]),int(ip[3]))
+	net = neta.split('.')
+	netaddr = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(int(net[0]),int(net[1]),int(net[2]),int(net[3]))
+	mask = maska.split('.')
+	maskSub = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(int(mask[0]),int(mask[1]),int(mask[2]),int(mask[3]))
+	for char in maskSub:
+	    if char == '1':
+		count += 1
+	print "NETADDR:", netaddr
+	print "SUBMASK:", maskSub
+	print "IP ADDR:", ipaddr
+  	return netaddr[:count-1] == ipaddr[:count-1] if count > 0 else True
+
+    def lookup_routes(self, daddr):
+        """ Lookup all valid routes for an address """
+        # TODO
+        "Add possible routes to self.routes for ease of use in future"
+	outroutes = {}
+	print args.networks
+	for net in self.sockets:
+	   print "Finding route (?)", net
+	   if self.addressInNetwork(daddr, net, '255.255.0.0'):
+		outroutes[daddr] = net
+	if not outroutes:
+	   for net in self.sockets:
+           	print "Finding route (?)", net
+                if self.addressInNetwork(daddr, net, '255.0.0.0'):
+		    outroutes[daddr] = net
+        return outroutes
+
+    def get_shortest_as_path(self, routes):
+        """ select the route with the shortest AS Path """
+        # TODO
+        outroutes = []
+        return outroutes
+            
+    def get_highest_preference(self, routes):
+        """ select the route with the shortest AS Path """
+        # TODO
+        outroutes = []
+        return outroutes
+         
+    def get_self_origin(self, routes):
+        """ select self originating routes """
+        # TODO
+        outroutes = []
+        return outroutes
+
+    def get_origin_routes(self, routes):
+        """ select origin routes: EGP > IGP > UNK """
+        # TODO
+        outroutes = []
+        return outroutes
+
+    def filter_relationships(self, srcif, routes):
+        """ Don't allow Peer->Peer, Peer->Prov, or Prov->Peer forwards """
+        outroutes = []
+       # for r in routes:
+	   
+        return outroutes
+
+    def get_route(self, srcif, daddr):
+        """	Select the best route for a given address	"""
+        #TODO
+        peer = None
+        routes = self.lookup_routes(daddr)
+        #Rules go here
+        if routes:
+            # 1. Highest Preference
+            #routes = self.get_highest_preference(routes)
+            # 2. Self Origin
+            #routes = self.get_self_origin(routes)
+            #3. Shortest ASPath
+            #routes = self.get_shortest_as_path(routes)
+            # 4. EGP > IGP > UNK
+            #routes = self.get_origin_routes(routes)
+            # 5. Lowest IP Address
+            # TODO
+            # Final check: enforce peering relationships
+            #routes = self.filter_relationships(srcif, routes)
+	    peer = routes.values()[0];
+	    print "Found route:", peer
+        return self.sockets[peer] if peer else None	
+
+    def forward(self, srcif, packet):
+        """	Forward a data packet	"""
+        # TODO
+	print"########################################################################\n"
+	daddr = packet['dst']
+	route = self.get_route(srcif, daddr)
+	print "The route for the data is:", route
+	try:
+            route.sendall(json.dumps(packet))
+        except:
+            print "Failed to send to", route
+            return False
+        return True
+
+    def coalesce(self):
+        """	coalesce any routes that are right next to each other	"""
+        # TODO (this is the most difficult task, save until last)
+        return False
+
+    def update(self, srcif, packet):
+        """	handle update packets	"""
+        # TODO
+	print"########################################################################\n" 
+	print "Routes", self.routes
+	print "Updates", self.updates
+	print "Relations", self.relations
+	print "Sockets", self.sockets
+	print "UPDATING"
+	src = packet['src']
+	dst = packet['dst']
+	self.updates[src+'|'+dst] = packet
+	data = {}
+	data['network'] = packet['msg']['network']
+	data['netmask'] = packet['msg']['netmask']
+	data['peer'] = packet['src']
+	self.routes[src] = data
+	packet['src'] = dst
+	for conn in self.sockets:
+            if self.addressInNetwork(src, conn, '255.255.0.0'):
+		i = 1	
+		#Possibly do something? Idk if I need to send to the place it came from
+	    else:
+	        packet['dst'] = conn
+                print "PACKET:", packet
+		print "TO    :", conn
+		self.sockets[conn].sendall(json.dumps(packet))
+        return True
+    
+    def revoke(self, packet):
+        """	handle revoke packets	"""
+        # TODO
+        return True
+
+    def dump(self, packet):
+        """	handles dump table requests	"""
+        # TODO
+	print"########################################################################\n"
+	print "DUMPING"
+	src = packet["src"]
+	dst = packet["dst"]
+	print "Source", src
+	print "destination", dst
+	data = {}
+	data['src'] = dst
+	data['dst'] = src
+	data['type'] = 'table'
+	data['msg'] = self.routes.values()
+	print data
+	#Get route for src (The new destination)
+	try:
+	    self.sockets['192.168.0.2'].sendall(json.dumps(data))
+	except:
+	    print "Failed to send to", self.sockets['192.168.0.2']
+	    return False
+        return True
+
+    def handle_packet(self, srcif, packet):
+        """	dispatches a packet """
+        # TODO
+	print"########################################################################\n" 
+	print "\n\nMessage\n",packet
+	print "\n\n\n"
+	type = packet["type"]
+	if type == "update":
+	    self.update(srcif, packet)
+	if type == "wait":
+	    print "WAITING"
+	if type == "dump":
+	    self.dump(packet)
+	if type == "data":
+	    self.forward(srcif, packet)
+        return True
+
+    def send_error(self, conn, msg):
+        """ Send a no_route error message """
+        # TODO
+        return
+
+    def run(self):
+        
+        while True:
+            socks = select.select(self.sockets.values(), [], [], 0.1)[0]
+            for conn in socks:
+                try:
+                    k = conn.recv(65535)
+                except:
+                    # either died on a connection reset, or was SIGTERM's by parent
+                    return
+                if k:
+                    for sock in self.sockets:
+                        if self.sockets[sock] == conn:
+                            srcif = sock
+                    msg = json.loads(k)
+                    if not self.handle_packet(srcif, msg):
+                        self.send_error(conn, msg)
+                else:
+                    return
+        return
+
+if __name__ == "__main__":
+    router = Router(args.networks)
+    #print (args)
+    #for n in args
+#	print(n)
+    router.run()
+
