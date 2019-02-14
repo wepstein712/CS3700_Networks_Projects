@@ -84,22 +84,11 @@ class Router:
 
     def lookup_routes(self, daddr):
         """ Lookup all valid routes for an address """
-        # TODO
-        "Add possible routes to self.routes for ease of use in future"
 	outroutes = []
-	print "DADDR: ", daddr
-	print "ROUTES: ", self.routes
-	print "SOCKETS: ", self.sockets
-	print args.networks
 	for net in self.routes:
 	   print "Finding route (?)", net
-	   if self.addressInNetwork(daddr, net, '255.255.0.0'):
+	   if self.addressInNetwork(daddr, net, self.routes[net]['netmask']):
 		outroutes.append(self.routes[net])
-	if not outroutes:
-	   for net in self.routes:
-           	print "Finding route (?)", net
-                if self.addressInNetwork(daddr, net, '255.0.0.0'):
-		    outroutes.append(self.routes[net])
         print outroutes
 	return outroutes
 
