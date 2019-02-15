@@ -81,9 +81,20 @@ class Router:
 	#print "IP ADDR:", ipaddr
   	return netaddr[:count-1] == ipaddr[:count-1] if count > 0 else True
 
+    def prefix_length(self, netmask):
+	"How long is the netmask"
+        count = 0
+        mask = netmask.split('.')
+        binMask = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(int(mask[0]),int(mask[1]),int(mask[2]),int(mask[3]))
+        for char in binMask:
+            if char == '1':
+                count += 1
+	return count
+	
     def lookup_routes(self, daddr):
         """ Lookup all valid routes for an address """
 	outroutes = []
+	longest_prefix = 0;
 	#print "ROUTES:", self.routes
 	for net  in self.routes:
 	    print "Finding route through (?)", net
@@ -92,7 +103,13 @@ class Router:
 	    for route in r:
 		#print "Checking route: ", json.dumps(route, indent=4)
 	    	if self.addressInNetwork(daddr, route['network'], route['netmask']):
-	    		outroutes.append(route)
+		    if self.prefix_length(route['netmask']) > longest_prefix:
+			longest_prefix = self.prefix_length(route['netmask'])
+	    	        outroutes = [route]
+		    else:
+			if self.prefix_length(route['netmask']) == longest_prefix:
+                            outroutes.append(route)
+
         #print "OUTROUTES: ",outroutes
 	return outroutes
 
@@ -349,8 +366,9 @@ class Router:
 	if src_relation == 'cust':
 	    for conn in self.sockets:
 	        if conn in self.routes:
-            	    if not self.addressInNetwork(src, conn, self.routes[conn][0]['netmask']):
-	       	    	packet['dst'] = conn
+            	    #if not self.addressInNetwork(src, conn, self.routes[conn][0]['netmask']):
+	       	    if not conn == src:
+			packet['dst'] = conn
              	    	print "PACKET:", packet
 		    	print "TO    :", conn
 		    	self.sockets[conn].sendall(json.dumps(packet))
