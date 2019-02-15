@@ -93,43 +93,49 @@ class Router:
 		print "Checking route: ", json.dumps(route, indent=4)
 	    	if self.addressInNetwork(daddr, route['network'], route['netmask']):
 	    		outroutes.append(route)
-        print outroutes
+        print "OUTROUTES: ",outroutes
 	return outroutes
 
     def get_shortest_as_path(self, routes):
         """ select the route with the shortest AS Path """
         # TODO
         outroutes = []
+	print "PRE SHORTEST ASPATH ROUTES: ", routes
         min_as = 10000
         for route in routes:
             if len(route['msg']['ASPath']) < min_as:
-                min_as = len(route['msg']['localpref'])
+                min_as = len(route['msg']['ASPath'])
                 outroutes = [route]
-            if len(route['msg']['localpref']) == min_as:
-                outroutes.append(route)
+            else:
+		if len(route['msg']['ASPath']) == min_as:
+                    outroutes.append(route)
+	print "POST SHORTEST ASPATH ROUTES: ", outroutes
         return outroutes
             
     def get_highest_preference(self, routes):
         """ select the route with the shortest AS Path """
         # TODO
-	print(routes)
+	print "PRE HIGH-PREF ROUTES: ", routes
         outroutes = []
         highest_pref = -1
         for route in routes:
             if route[MESG][LPRF] > highest_pref:
                 highest_pref = route[MESG][LPRF]
                 outroutes = [route]
-            if route[MESG][LPRF] == highest_pref:
-                outroutes.append(route)
+            else:
+		if route[MESG][LPRF] == highest_pref:
+                    outroutes.append(route)
+	print "POST HIGH-PREF ROUTES: ", outroutes
         return outroutes
          
     def get_self_origin(self, routes):
         """ select self originating routes """
-        # TODO
         outroutes = []
+	print "PRE SELF-ORIGIN ROUTES: ", routes
         for route in routes:
-            if route['msg']['selfOrigin']:
+            if route['msg']['selfOrigin'] == 'True':
                 outroutes.append(route)
+	print "POST SELF-ORIGIN ROUTES: ", outroutes
         return outroutes
 
     def get_origin_routes(self, routes):
@@ -219,20 +225,33 @@ class Router:
         routes = self.lookup_routes(daddr)
         #Rules go here
         if routes:
-            # 1. Highest Preference
-            routes = self.get_highest_preference(routes)
-            # 2. Self Origin
-            routes = self.get_self_origin(routes)
-            #3. Shortest ASPath
-            routes = self.get_shortest_as_path(routes)
-            # 4. EGP > IGP > UNK
-            routes = self.get_origin_routes(routes)
-            # 5. Lowest IP Address
-            routes = self.get_lowest_ip_addr(routes)
+	    if len(routes) > 1:
+            	# 1. Highest Preference
+		print "TESTING PREF"
+            	routes = self.get_highest_preference(routes)
+            if len(routes) > 1:
+		print "TESTING SELF ORIGIN"
+		# 2. Self Origin
+            	routes = self.get_self_origin(routes)
+            if len(routes) > 1:
+		print "TESTING SHORTEST ASPATH"
+		#3. Shortest ASPath
+            	routes = self.get_shortest_as_path(routes)
+            if len(routes) > 1:
+		print "TESTING ORIGIN"
+		# 4. EGP > IGP > UNK
+            	routes = self.get_origin_routes(routes)
+            if len(routes) > 1:
+		print "TESTING LOWEST IP"
+		# 5. Lowest IP Address
+            	routes = self.get_lowest_ip_addr(routes)
             # Final check: enforce peering relationships
             # routes = self.filter_relationships(srcif, routes)
-	    peer = routes[0]
-	    print "Found route:", peer
+	    if routes:
+	    	peer = routes[0]
+	    	print "Found route:", peer
+	    else:
+		return None
         return self.sockets[peer['peer']] if peer else None	
 
     def forward(self, srcif, packet):
@@ -241,6 +260,20 @@ class Router:
 	print"########################################################################\n"
 	daddr = packet['dst']
 	route = self.get_route(srcif, daddr)
+	if not route:
+	    #TODO
+	    "Return no_route"
+	    "Super high level assumption that router is always x.x.x.1"
+	    ip = srcif.split('.')
+            ipaddr = ip[0] + '.' + ip[1] + '.' + ip[2] + '.' + '1'
+	    msg = {}
+	    msg['src'] = ipaddr 
+	    msg['dst'] = packet['src']
+	    msg['type'] = 'no route'
+	    msg['msg'] = {}
+	    print "NO ROUTE MSG: ", json.dumps(msg, indent=4)
+	    self.send_error(srcif, msg)
+	    return False
 	print "The route for the data is:", route
 	try:
             route.sendall(json.dumps(packet))
@@ -326,9 +359,9 @@ class Router:
 	print json.dumps(data, indent=4)
 	#Get route for src (The new destination)
 	try:
-	    self.sockets['192.168.0.2'].sendall(json.dumps(data))
+	    self.sockets[src].sendall(json.dumps(data))
 	except:
-	    print "Failed to send to", self.sockets['192.168.0.2']
+	    print "Failed to send to", self.sockets[src]
 	    return False
         return True
 
@@ -351,7 +384,7 @@ class Router:
 
     def send_error(self, conn, msg):
         """ Send a no_route error message """
-        # TODO
+        self.sockets[conn].sendall(json.dumps(msg))
         return
 
     def run(self):
