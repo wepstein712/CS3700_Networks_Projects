@@ -76,31 +76,31 @@ class Router:
 	for char in maskSub:
 	    if char == '1':
 		count += 1
-	print "NETADDR:", netaddr
-	print "SUBMASK:", maskSub
-	print "IP ADDR:", ipaddr
+	#print "NETADDR:", netaddr
+	#print "SUBMASK:", maskSub
+	#print "IP ADDR:", ipaddr
   	return netaddr[:count-1] == ipaddr[:count-1] if count > 0 else True
 
     def lookup_routes(self, daddr):
         """ Lookup all valid routes for an address """
 	outroutes = []
-	print "ROUTES:", self.routes
+	#print "ROUTES:", self.routes
 	for net  in self.routes:
 	    print "Finding route through (?)", net
 	    r = self.routes[net]
-	    print "Route Array: ", r
+	    #print "Route Array: ", r
 	    for route in r:
-		print "Checking route: ", json.dumps(route, indent=4)
+		#print "Checking route: ", json.dumps(route, indent=4)
 	    	if self.addressInNetwork(daddr, route['network'], route['netmask']):
 	    		outroutes.append(route)
-        print "OUTROUTES: ",outroutes
+        #print "OUTROUTES: ",outroutes
 	return outroutes
 
     def get_shortest_as_path(self, routes):
         """ select the route with the shortest AS Path """
         # TODO
         outroutes = []
-	print "PRE SHORTEST ASPATH ROUTES: ", routes
+	#print "PRE SHORTEST ASPATH ROUTES: ", routes
         min_as = 10000
         for route in routes:
             if len(route['msg']['ASPath']) < min_as:
@@ -109,13 +109,13 @@ class Router:
             else:
 		if len(route['msg']['ASPath']) == min_as:
                     outroutes.append(route)
-	print "POST SHORTEST ASPATH ROUTES: ", outroutes
+	#print "POST SHORTEST ASPATH ROUTES: ", outroutes
         return outroutes
             
     def get_highest_preference(self, routes):
         """ select the route with the shortest AS Path """
         # TODO
-	print "PRE HIGH-PREF ROUTES: ", routes
+	#print "PRE HIGH-PREF ROUTES: ", routes
         outroutes = []
         highest_pref = -1
         for route in routes:
@@ -125,17 +125,17 @@ class Router:
             else:
 		if route[MESG][LPRF] == highest_pref:
                     outroutes.append(route)
-	print "POST HIGH-PREF ROUTES: ", outroutes
+	#print "POST HIGH-PREF ROUTES: ", outroutes
         return outroutes
          
     def get_self_origin(self, routes):
         """ select self originating routes """
         outroutes = []
-	print "PRE SELF-ORIGIN ROUTES: ", routes
+	#print "PRE SELF-ORIGIN ROUTES: ", routes
         for route in routes:
             if route['msg']['selfOrigin'] == 'True':
                 outroutes.append(route)
-	print "POST SELF-ORIGIN ROUTES: ", outroutes
+	#print "POST SELF-ORIGIN ROUTES: ", outroutes
         return outroutes
 
     def get_origin_routes(self, routes):
@@ -165,7 +165,7 @@ class Router:
         ip_list = []
         for route in routes:
 	    ip = route['msg']['network'].split('.')
-            print(ip)
+            #print(ip)
 	    w = int(ip[0])
             x = int(ip[1])
             y = int(ip[2])
@@ -274,7 +274,7 @@ class Router:
 	    print "NO ROUTE MSG: ", json.dumps(msg, indent=4)
 	    self.send_error(srcif, msg)
 	    return False
-	print "The route for the data is:", route
+	print "The route for the data is:", route.getpeername()
 	try:
             route.sendall(json.dumps(packet))
         except:
@@ -290,12 +290,12 @@ class Router:
     def update(self, srcif, packet):
         """	handle update packets	"""
         # TODO
-	print"########################################################################\n" 
-	print "Routes", json.dumps(self.routes, indent=4)
-	print "Updates", json.dumps(self.updates, indent=4)
-	print "Relations", json.dumps(self.relations, indent=4)
-	print "Sockets", self.sockets
-	print "UPDATING"
+	#print"########################################################################\n" 
+	#print "Routes", json.dumps(self.routes, indent=4)
+	#print "Updates", json.dumps(self.updates, indent=4)
+	#print "Relations", json.dumps(self.relations, indent=4)
+	#print "Sockets", self.sockets
+	#print "UPDATING"
 	src = packet['src']
 	dst = packet['dst']
 	self.updates[src+'|'+dst] = packet
@@ -335,8 +335,21 @@ class Router:
     
     def revoke(self, packet):
         """	handle revoke packets	"""
-        # TODO
-        return True
+        print "REVOKE MSG: ", json.dumps(packet, indent=4)
+	revoke_routes = packet['msg']
+	src = packet['src']
+	dst = packet['dst']
+	for r in revoke_routes:
+	    if src in self.routes.keys():
+ 	        network = r['network']
+	        netmask = r['netmask'] 
+		for route in self.routes[src]:
+		    if route['network'] == network and route['netmask'] == netmask:
+			print "REVOKING ROUTE: ", json.dumps(route, indent=4)
+			self.routes[src].remove(route)
+        print "Routes", json.dumps(self.routes, indent=4)
+        print "Updates", json.dumps(self.updates, indent=4)
+	return True
 
     def dump(self, packet):
         """	handles dump table requests	"""
@@ -369,7 +382,7 @@ class Router:
         """	dispatches a packet """
         # TODO
 	print"########################################################################\n" 
-	print "\n\nMessage\n",packet
+	print "\n\nMessage\n",json.dumps(packet, indent=4)
 	print "\n\n\n"
 	type = packet["type"]
 	if type == "update":
@@ -380,6 +393,8 @@ class Router:
 	    self.dump(packet)
 	if type == "data":
 	    self.forward(srcif, packet)
+	if type == "revoke":
+	    self.revoke(packet)
         return True
 
     def send_error(self, conn, msg):
