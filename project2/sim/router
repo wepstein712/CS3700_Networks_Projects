@@ -65,8 +65,7 @@ class Router:
         return
 
     def addressInNetwork(self,ipa,neta,maska):
-   	"Is an address in a network"
-   	#TODO	
+   	"Is an address in a network"	
 	count = 0
 	ip = ipa.split('.')
 	ipaddr = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(int(ip[0]),int(ip[1]),int(ip[2]),int(ip[3]))
@@ -85,10 +84,15 @@ class Router:
     def lookup_routes(self, daddr):
         """ Lookup all valid routes for an address """
 	outroutes = []
-	for net in self.routes:
-	   print "Finding route (?)", net
-	   if self.addressInNetwork(daddr, net, self.routes[net]['netmask']):
-		outroutes.append(self.routes[net])
+	print "ROUTES:", self.routes
+	for net  in self.routes:
+	    print "Finding route through (?)", net
+	    r = self.routes[net]
+	    print "Route Array: ", r
+	    for route in r:
+		print "Checking route: ", json.dumps(route, indent=4)
+	    	if self.addressInNetwork(daddr, route['network'], route['netmask']):
+	    		outroutes.append(route)
         print outroutes
 	return outroutes
 
@@ -254,9 +258,9 @@ class Router:
         """	handle update packets	"""
         # TODO
 	print"########################################################################\n" 
-	print "Routes", self.routes
-	print "Updates", self.updates
-	print "Relations", self.relations
+	print "Routes", json.dumps(self.routes, indent=4)
+	print "Updates", json.dumps(self.updates, indent=4)
+	print "Relations", json.dumps(self.relations, indent=4)
 	print "Sockets", self.sockets
 	print "UPDATING"
 	src = packet['src']
@@ -267,17 +271,33 @@ class Router:
 	data['netmask'] = packet['msg']['netmask']
 	data['peer'] = packet['src']
     	data['msg'] = packet['msg']
-	self.routes[src] = data
+	if len(self.routes) > 0:
+	    if src in self.routes.keys():
+		print "ADDING TO ROUTE: ", src
+		print "WITH VALUE OF:   ", data
+	    	self.routes[src].append(data)
+	    else:
+		print "NEW ROUTE:       ", data
+	        self.routes[src] = [data]
+	else:
+	    print "EMPTY ROUTING TABLE, FILLING WITH: ", data
+	    self.routes[src] = [data]
 	packet['src'] = dst
 	for conn in self.sockets:
-            if self.addressInNetwork(src, conn, '255.255.0.0'):
-		i = 1	
-		#Possibly do something? Idk if I need to send to the place it came from
+	    if conn in self.routes:
+            	if not self.addressInNetwork(src, conn, self.routes[conn][0]['netmask']):
+	       	    packet['dst'] = conn
+             	    print "PACKET:", packet
+		    print "TO    :", conn
+		    self.sockets[conn].sendall(json.dumps(packet))
+	    	else:
+		    print "Didn't update source: ", conn
 	    else:
-	        packet['dst'] = conn
-                print "PACKET:", packet
+		packet['dst'] = conn
+		print "PACKET:", packet
 		print "TO    :", conn
 		self.sockets[conn].sendall(json.dumps(packet))
+	
         return True
     
     def revoke(self, packet):
@@ -298,8 +318,12 @@ class Router:
 	data['src'] = dst
 	data['dst'] = src
 	data['type'] = 'table'
-	data['msg'] = self.routes.values()
-	print data
+	message = []
+	for array in self.routes.values():
+	    for entry in array:
+		message.append(entry)
+	data['msg'] = message
+	print json.dumps(data, indent=4)
 	#Get route for src (The new destination)
 	try:
 	    self.sockets['192.168.0.2'].sendall(json.dumps(data))
