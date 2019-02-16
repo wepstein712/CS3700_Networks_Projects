@@ -81,6 +81,22 @@ class Router:
 	#print "IP ADDR:", ipaddr
   	return netaddr[:count-1] == ipaddr[:count-1] if count > 0 else True
 
+    def mask_adjusted_ip(self, ip, mask):
+	count = 0
+        ip_quad = ip.split('.')
+        ipaddr = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(int(ip_quad[0]),int(ip_quad[1]),int(ip_quad[2]),int(ip_quad[3]))
+        mask_quad = mask.split('.')
+        maskSub = '{0:08b}{1:08b}{2:08b}{3:08b}'.format(int(mask_quad[0]),int(mask_quad[1]),int(mask_quad[2]),int(mask_quad[3]))
+        for char in maskSub:
+            if char == '1':
+                count += 1
+        address = ipaddr[:count - 1]
+	while len(address) < 32:
+	    print address
+	    address += '0'
+	print "Adjusted Address: ", address
+        return address
+
     def prefix_length(self, netmask):
 	"How long is the netmask"
         count = 0
@@ -90,6 +106,35 @@ class Router:
             if char == '1':
                 count += 1
 	return count
+
+    def bit_string_to_quad(self, bit_string):
+	#Turns a byte string of 32 length into an xxx.xxx.xxx.xxx IP/MASK (DOTTED QUAD)
+	qA = int(bit_string[0:7], 2)
+	qB = int(bit_string[8:15], 2)
+	qC = int(bit_string[16:23], 2)
+	qD = int(bit_string[24:31], 2)
+	quad = '{0}.{1}.{2}.{3}'.format(qA, qB, qC, qD)
+	print 'Converting: {0} -> {1}'.format(bit_string, quad)
+	return quad
+
+    def adjacent_route_reduction(self, ip_a, mask_a, ip_b, mask_b):
+	#Returns a route if the routes can be reduced, None if a reduced route cant be produced
+	if not mask_a == mask_b:
+	    return None
+	mask = self.prefix_length(mask_a)
+	if ip_a == ip_b:
+	    return '{0}/{1}'.format(ip_a,mask_length) 
+	adj_ip_a = self.mask_adjusted_ip(ip_a, mask_a)
+	adj_ip_b = self.mask_adjusted_ip(ip_b, mask_b)
+	if adj_ip_a[:mask - 2] == adj_ip_b[:mask - 2] and adj_ip_a[mask:] == adj_ip_b[mask:]:
+	    if int(adj_ip_a, 2) < int(adj_ip_b, 2):
+		ip = adj_ip_a
+	    else:
+		ip = adj_ip_b
+	    print "IP A:      ", adj_ip_a
+	    print "IP B:      ", adj_ip_b
+	    print "COALESCED :", self.bit_string_to_quad(ip) + '/' + mask_length - 1
+	    return self.bit_string_to_quad(ip) + '/' + mask_length - 1
 	
     def lookup_routes(self, daddr):
         """ Lookup all valid routes for an address """
@@ -325,7 +370,46 @@ class Router:
     def coalesce(self):
         """	coalesce any routes that are right next to each other	"""
         # TODO (this is the most difficult task, save until last)
-        return False
+        new_routes = []
+	for sock in self.routes.values():
+	    print "Sock:", sock
+	    for x in sock:
+		for y in sock:
+		    if not x == y:	   
+			#DO checks for other values (hpref, aspath, etc.)
+			print "X:",x
+			print "Y:",y
+			if x['msg']['origin'] == y['msg']['origin'] and x['msg']['localpref'] == y['msg']['localpref'] and x['msg']['selfOrigin'] == y['msg']['selfOrigin'] and x['msg']['ASPath'] == y['msg']['ASPath']:
+		    	    coal_route = self.adjacent_route_reduction(x['network'], x['netmask'], y['network'], y['netmask'])
+		    	    if coal_route:
+			    	#Make coal_route a real route
+			    	r = x
+			    	r['network'] = coal_route[:coal_route.find('/')]
+			    	print "NEW COAL ROUTE: ", coal_route[:coal_route.find('/')]
+			    	mask_len = int(coal_route[coal_route.find('/' + 1):])
+			    	netmask = ""
+			    	count = 0
+			    	while cout < 32:
+				    if count < mask_len:
+				    	netmask.append("1")
+				    else:
+				    	netmask.append("0")
+				    count += 1
+			    	r['netmask'] = self.bit_string_to_quad(netmask)
+			    	if not r in new_routes:
+			    	    new_routes.append(r)
+			    else:
+			    	if not y in new_routes:
+				    new_routes.append(y)
+			    	if not x in new_routes:
+				    new_routes.append(x)
+			else:
+			    if not y in new_routes:
+                            	new_routes.append(y)
+                            if not x in new_routes:
+                                new_routes.append(x)
+	    sock = new_routes
+	return False
 
     def update(self, srcif, packet):
         """	handle update packets	"""
@@ -399,7 +483,8 @@ class Router:
 		else:
 		    print "Not sending update to -> ", conn
 		    print "Relation is ", self.relations[conn]  
-        return True
+        self.coalesce()
+	return True
     
     def revoke(self, packet):
         """	handle revoke packets	"""
