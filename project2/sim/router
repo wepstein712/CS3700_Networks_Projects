@@ -126,7 +126,7 @@ class Router:
 	qC = int(bit_string[16:24], 2)
 	qD = int(bit_string[24:], 2)
 	quad = '{0}.{1}.{2}.{3}'.format(qA, qB, qC, qD)
-	print 'Converting: {0} -> {1}'.format(bit_string, quad)
+	#print 'Converting: {0} -> {1}'.format(bit_string, quad)
 	return quad
 
     def adjacent_route_reduction(self, ip_a, mask_a, ip_b, mask_b):
@@ -146,39 +146,40 @@ class Router:
 		ip = adj_ip_a
 	    else:
 		ip = adj_ip_b
-	    print "IP A:      ", self.prettyprint_ip(adj_ip_a)
-	    print "IP B:      ", self.prettyprint_ip(adj_ip_b)
-	    
-	    print "COALESCED :", self.prettyprint_ip(self.bit_string_to_quad(ip)) + '/' + str(mask - 1)
+	    #print "IP A:      ", self.prettyprint_ip(adj_ip_a)
+	    #print "IP B:      ", self.prettyprint_ip(adj_ip_b)
+	    #print "COALESCED :", self.prettyprint_ip(self.bit_string_to_quad(ip)) + '/' + str(mask - 1)
 	    return self.bit_string_to_quad(ip) + '/' + str(mask - 1)
 	
     def lookup_routes(self, daddr):
         """ Lookup all valid routes for an address """
 	outroutes = []
 	longest_prefix = 0;
-	#print "ROUTES:", self.routes
+	print "ROUTES:", self.routes
 	for net  in self.routes:
-	    #print "Finding route through (?)", net
+	    print "Finding route through (?)", net
 	    r = self.routes[net]
 	    #print "Route Array: ", r
 	    for route in r:
-		#print "Checking route: ", json.dumps(route, indent=4)
+		print "Checking route: ", json.dumps(route, indent=4)
 	    	if self.addressInNetwork(daddr, route['network'], route['netmask']):
 		    if self.prefix_length(route['netmask']) > longest_prefix:
-			longest_prefix = self.prefix_length(route['netmask'])
-	    	        outroutes = [route]
-		    else:
-			if self.prefix_length(route['netmask']) == longest_prefix:
+                    	longest_prefix = self.prefix_length(route['netmask'])
+                    	print "New shortest-prefix route: ", route
+                    	outroutes = [route]
+                    else:
+                    	if self.prefix_length(route['netmask']) == longest_prefix:
+                            print "Another shortest-route, adding: ", route
                             outroutes.append(route)
 
-        #print "OUTROUTES: ",outroutes
+        print "OUTROUTES: ",outroutes
 	return outroutes
 
     def get_shortest_as_path(self, routes):
         """ select the route with the shortest AS Path """
         # TODO
         outroutes = []
-	#print "PRE SHORTEST ASPATH ROUTES: ", routes
+	print "PRE SHORTEST ASPATH ROUTES: ", routes
         min_as = 10000
         for route in routes:
             if len(route['msg']['ASPath']) < min_as:
@@ -187,13 +188,13 @@ class Router:
             else:
 		if len(route['msg']['ASPath']) == min_as:
                     outroutes.append(route)
-	#print "POST SHORTEST ASPATH ROUTES: ", outroutes
+	print "POST SHORTEST ASPATH ROUTES: ", outroutes
         return outroutes
             
     def get_highest_preference(self, routes):
         """ select the route with the shortest AS Path """
         # TODO
-	#print "PRE HIGH-PREF ROUTES: ", routes
+	print "PRE HIGH-PREF ROUTES: ", routes
         outroutes = []
         highest_pref = -1
         for route in routes:
@@ -203,17 +204,20 @@ class Router:
             else:
 		if route[MESG][LPRF] == highest_pref:
                     outroutes.append(route)
-	#print "POST HIGH-PREF ROUTES: ", outroutes
+	print "POST HIGH-PREF ROUTES: ", outroutes
         return outroutes
          
     def get_self_origin(self, routes):
         """ select self originating routes """
         outroutes = []
-	#print "PRE SELF-ORIGIN ROUTES: ", routes
+	print "PRE SELF-ORIGIN ROUTES: ", routes
         for route in routes:
             if route['msg']['selfOrigin'] == 'True':
                 outroutes.append(route)
-	#print "POST SELF-ORIGIN ROUTES: ", outroutes
+	print "POST SELF-ORIGIN ROUTES: ", outroutes
+	if len(outroutes) < 1:
+	    print "NO SELF_ORIGIN, NOT FILTERING"
+	    return routes
         return outroutes
 
     def get_origin_routes(self, routes):
@@ -221,12 +225,12 @@ class Router:
         # TODO
         outroutes = []
         for route in routes:
-            if route['msg']['origin'] == 'EGP':
+            if route['msg']['origin'] == 'IGP':
                 outroutes.append(route)
         if len(outroutes) > 0: 
             return outroutes
         for route in routes:
-            if route['msg']['origin'] == 'IGP':
+            if route['msg']['origin'] == 'EGP':
                 outroutes.append(route)
         if len(outroutes) > 0: 
             return outroutes
@@ -241,9 +245,10 @@ class Router:
         outroutes = []
         big_routes = []
         ip_list = []
+	print "IP TEST ROUTES: ", json.dumps(routes, indent=4)
         for route in routes:
-	    ip = route['msg']['network'].split('.')
-            #print(ip)
+	    ip = route['peer'].split('.')
+            print(ip)
 	    w = int(ip[0])
             x = int(ip[1])
             y = int(ip[2])
@@ -258,7 +263,7 @@ class Router:
             if item[0] == lowest:
                 big_routes.append(item)
         lowest = 10000
-        ip_list = big_routes
+        ip_list = copy.copy(big_routes)
         big_routes = []
         for item in ip_list:
             if item[1] < lowest:
@@ -267,7 +272,7 @@ class Router:
             if item[1] == lowest:
                 big_routes.append(item)
         lowest = 10000
-        ip_list = big_routes
+        ip_list = copy.copy(big_routes)
         big_routes = []
         for item in ip_list:
             if item[2] < lowest:
@@ -276,7 +281,7 @@ class Router:
             if item[2] == lowest:
                 big_routes.append(item)
         lowest = 10000
-        ip_list = big_routes
+        ip_list = copy.copy(big_routes)
         big_routes = []
         for item in ip_list:
             if item[3] < lowest:
@@ -302,16 +307,16 @@ class Router:
 	if srcif in self.relations:
 	    src_relation = self.relations[srcif]
 	else:
-	    #print "No relation stored"
+	    print "No relation stored"
 	    return outroutes
 	if src_relation == 'cust':
-	    #print "Relation is CUSTOMER: ", srcif
+	    print "Relation is CUSTOMER: ", srcif
 	    return route
 	"dst relation"
-	#print "Source is CUST"
+	print "Source is CUST"
 	peer = route['peer']
 	if peer in self.relations:
-	    #print "DESTINATION RELATION: ", self.relations[peer]
+	    print "DESTINATION RELATION: ", self.relations[peer]
 	    if self.relations[peer] == 'cust':
 		print "Desination relation is CUSTOMER"
 		return route
@@ -344,6 +349,7 @@ class Router:
 		#print "TESTING LOWEST IP"
 		# 5. Lowest IP Address
             	routes = self.get_lowest_ip_addr(routes)
+
             # Final check: enforce peering relationships
 
 	    if routes:
@@ -358,7 +364,7 @@ class Router:
     def forward(self, srcif, packet):
         """	Forward a data packet	"""
         # TODO
-	print"########################################################################\n"
+	#print"########################################################################\n"
 	daddr = packet['dst']
 	route = self.get_route(srcif, daddr)
 	if not route:
@@ -372,10 +378,10 @@ class Router:
 	    msg['dst'] = packet['src']
 	    msg['type'] = 'no route'
 	    msg['msg'] = {}
-	    #print "NO ROUTE MSG: ", json.dumps(msg, indent=4)
+	    print "NO ROUTE MSG: ", json.dumps(msg, indent=4)
 	    self.send_error(srcif, msg)
 	    return False
-	#print "The route for the data is:", route.getpeername()
+	print "The route for the data is:", route.getpeername()
 	try:
             route.sendall(json.dumps(packet))
         except:
@@ -398,30 +404,30 @@ class Router:
 	    new_routes = []
 	    blacklist = []
 	    sock = self.routes[key]
-	    print "Sock:", sock
-	    print "Current Routes", json.dumps(self.routes, indent=4)
+	    #print "Sock:", sock
+	    print "Old Routes", json.dumps(self.routes, indent=4)
 	    for x in sock:
 		for y in sock:
-		    print "New Route List: ", new_routes
+		    #print "New Route List: ", new_routes
 		    if not x == y:	   
 			#DO checks for other values (hpref, aspath, etc.)
 			#print "X:",x
 			#print "Y:",y
 			if x['msg']['origin'] == y['msg']['origin'] and x['msg']['localpref'] == y['msg']['localpref'] and x['msg']['selfOrigin'] == y['msg']['selfOrigin'] and x['msg']['ASPath'] == y['msg']['ASPath']:
-		    	    print "Trying to coalesce routes"
+		    	    #print "Trying to coalesce routes"
 			    coal_route = self.adjacent_route_reduction(x['network'], x['netmask'], y['network'], y['netmask'])
-		    	    print "COAL ROUTE: ", coal_route
+		    	    #print "COAL ROUTE: ", coal_route
 			    if coal_route:
 			    	#Make coal_route a real route
 				if x in new_routes:
                                     new_routes.remove(x)
-				    print "REMOVING ROUTE: ", x
+				    #print "REMOVING ROUTE: ", x
                                 if y in new_routes:
                                     new_routes.remove(y)
-				    print "REMOVING ROUTE: ", y
+				    #print "REMOVING ROUTE: ", y
 			    	r = x
 			    	r['network'] = coal_route[:coal_route.find('/')]
-			    	print "NEW COAL ROUTE: ", coal_route[:coal_route.find('/')]
+			    	#print "NEW COAL ROUTE: ", coal_route[:coal_route.find('/')]
 			    	mask_len = int(coal_route[coal_route.find('/') + 1:])
 			    	netmask = ""
 			    	count = 0
@@ -437,26 +443,26 @@ class Router:
 				    blacklist.append(y)
 				    if x in new_routes:
                                     	new_routes.remove(x)
-                                    	print "REMOVING ROUTE: ", x
+                                    	#print "REMOVING ROUTE: ", x
                                     if y in new_routes:
                                     	new_routes.remove(y)
-                                    	print "REMOVING ROUTE: ", y
+                                    	#print "REMOVING ROUTE: ", y
 			    	    new_routes.append(r)
-				    print "ADDING ROUTE: ", r
+				    #print "ADDING ROUTE: ", r
 			    else:
 			    	if not y in new_routes and not y in blacklist:
 				    new_routes.append(y)
-				    print "ADDING ROUTE: ", y
+				    #print "ADDING ROUTE: ", y
 			else:
 			    if not y in new_routes and not y in blacklist:
                             	new_routes.append(y)
-				print "ADDING ROUTE: ", y
+				#print "ADDING ROUTE: ", y
 	      	    else:
 			if len(sock) == 1:
 			    if not y in new_routes:
 				new_routes.append(y)
-				print "ADDING ROUTE: ", y
-				print "DEFAULT ADD"
+				#print "ADDING ROUTE: ", y
+				#print "DEFAULT ADD"
 	    #print "Key: ",key
 	    #print "Old: ",json.dumps(self.routes[key], indent=4)
 	    #print "New: ",json.dumps(new_routes, indent=4)
@@ -472,7 +478,7 @@ class Router:
 	print "Updates", json.dumps(self.updates, indent=4)
 	#print "Relations", json.dumps(self.relations, indent=4)
 	#print "Sockets", self.sockets
-	#print "UPDATING"
+	print "UPDATING"
 	src = packet['src']
 	dst = packet['dst']
 	data = {}
@@ -488,33 +494,33 @@ class Router:
 	#Add to updates
 	if len(self.updates) > 0:
             if src in self.updates.keys():
-                print "ADDING TO UPDATE DICT: ", src
-                print "WITH VALUE OF:   ", update
+                #print "ADDING TO UPDATE DICT: ", src
+                #print "WITH VALUE OF:   ", update
                 self.updates[src].append(update)
             else:
-                print "NEW UPDATE:      ", update
+                #print "NEW UPDATE:      ", update
                 self.updates[src] = [update]
         else:
-            print "EMPTY UPDATE LIST, FILLING WITH: ", update
+            #print "EMPTY UPDATE LIST, FILLING WITH: ", update
             self.updates[src] = [update]
 	#Add to routes
 	if len(self.routes) > 0:
 	    if src in self.routes.keys():
-		print "ADDING TO ROUTE: ", src
-		print "WITH VALUE OF:   ", data
+		#print "ADDING TO ROUTE: ", src
+		#print "WITH VALUE OF:   ", data
 	    	self.routes[src].append(data)
 	    else:
-		print "NEW ROUTE:       ", data
+		#print "NEW ROUTE:       ", data
 	        self.routes[src] = [data]
 	else:
-	    print "EMPTY ROUTING TABLE, FILLING WITH: ", data
+	    #print "EMPTY ROUTING TABLE, FILLING WITH: ", data
 	    self.routes[src] = [data]
 	packet['src'] = dst
 	src_relation = ''
 	if src in self.relations:
 	    src_relation = self.relations[src]
 	else:
-	    print "Problem found, update came from someone with no relation to router"
+	    #print "Problem found, update came from someone with no relation to router"
 	    return False
 	"Update is from customer, send to all"	 
 	if src_relation == 'cust':
@@ -523,15 +529,15 @@ class Router:
             	    #if not self.addressInNetwork(src, conn, self.routes[conn][0]['netmask']):
 	       	    if not conn == src:
 			packet['dst'] = conn
-             	    	print "PACKET:", packet
-		    	print "TO    :", conn
+             	    	#print "PACKET:", packet
+		    	#print "TO    :", conn
 		    	self.sockets[conn].sendall(json.dumps(packet))
 	    	    else:
 		    	print "Didn't update source: ", conn
 	        else:
 		    packet['dst'] = conn
-		    print "PACKET:", packet
-		    print "TO    :", conn
+		    #print "PACKET:", packet
+		    #print "TO    :", conn
 		    self.sockets[conn].sendall(json.dumps(packet))
 	else:
 	    "Update is not from customer, only send to customers"
@@ -540,19 +546,19 @@ class Router:
                     if conn in self.routes:
                     	if not self.addressInNetwork(src, conn, self.routes[conn][0]['netmask']):
                             packet['dst'] = conn
-                            print "PACKET:", packet
-                            print "TO    :", conn
+                            #print "PACKET:", packet
+                            #print "TO    :", conn
                             self.sockets[conn].sendall(json.dumps(packet))
                         else:
                             print "Didn't update source: ", conn
                     else:
                     	packet['dst'] = conn
-                    	print "PACKET:", packet
-                    	print "TO    :", conn
+                    	#print "PACKET:", packet
+                    	#print "TO    :", conn
                     	self.sockets[conn].sendall(json.dumps(packet)) 
 		else:
 		    print "Not sending update to -> ", conn
-		    print "Relation is ", self.relations[conn]  
+		    #print "Relation is ", self.relations[conn]  
         self.coalesce()
 	return True
     
@@ -572,8 +578,8 @@ class Router:
 			print "REVOKING ROUTE: ", json.dumps(route, indent=4)
 			self.routes[src].remove(route)
 			self.updates[src].remove(route)
-        print "Routes", json.dumps(self.routes, indent=4)
-        print "Sockets", self.sockets
+        #print "Routes", json.dumps(self.routes, indent=4)
+        #print "Sockets", self.sockets
 
 	for conn in self.sockets:
             if conn in self.routes:
@@ -581,8 +587,8 @@ class Router:
                     if not self.addressInNetwork(src, conn, self.routes[conn][0]['netmask']):
                     	packet['dst'] = conn
 			packet['src'] = dst
-                    	print "PACKET:", packet
-                    	print "TO    :", conn
+                    	#print "PACKET:", packet
+                    	#print "TO    :", conn
                     	self.sockets[conn].sendall(json.dumps(packet))
                     else:
                     	print "Didn't update source: ", conn
@@ -591,8 +597,8 @@ class Router:
             else:
                 packet['dst'] = conn
 		packet['src'] = dst
-                print "PACKET:", packet
-                print "TO    :", conn
+                #print "PACKET:", packet
+                #print "TO    :", conn
                 self.sockets[conn].sendall(json.dumps(packet))
 	self.coalesce()
 	return True
