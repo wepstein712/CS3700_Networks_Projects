@@ -16,7 +16,9 @@ TIMEOUT = 30
 SEQUENCE = 0
 WINDOW = 1
 UNACKED = []
-DATA = []
+#DATA = []
+INPUT = []
+PACKET_NUM =  0
 # Bind to localhost and an ephemeral port
 IP_PORT = sys.argv[1]
 UDP_IP = IP_PORT[0:IP_PORT.find(":")]
@@ -33,6 +35,7 @@ def log(string):
 def send_next_packet():
   global SEQUENCE
   global UNACKED
+  log("SHOULD NEVER BE CALLED RIGHT NOW")
   log("WINDOW SIZE: " + str(WINDOW))
   data = sys.stdin.read(DATA_SIZE)
   if (len(data) > 0):
@@ -50,6 +53,7 @@ def send_next_packet():
     return False
 
 def resend_packet(info):
+  log("SHOULD PROBS NOT BE CALLED AT THIS POINT")
   msg = json.dumps(info)
   UNACKED.append(int(info['sequence']))
   if sock.sendto(msg, dest) < len(msg):
@@ -58,21 +62,49 @@ def resend_packet(info):
     log("[send data] " + str(info['sequence'] + " (" + str(len(info['data']))) + ")")
   return True
   
+def send_packet(index):
+  global PACKET_NUM
+  log("Sending index #" + str(index))
+  msg = INPUT[index]
+  json_object = json.loads(msg)
+  log("THIS IS A TEST: " + str(len(json_object.keys())))
+  UNACKED.append(json_object)
+  if sock.sendto(msg, dest) < len(msg):
+    log("[error] unable to fully send packet")
+  else:
+    log("[send data] " + str(json_object['sequence']) + " (" + str(len(json_object['data'])) + ")")
+    PACKET_NUM += 1
+    
 
-
-
-
-# Send first packet
+def readData():
+  global  INPUT
+  global  SEQUENCE
+  section = sys.stdin.read(DATA_SIZE)
+  while (len(section) > 0):
+    msg = json.dumps({"sequence": SEQUENCE, "data": section, "ack": False, "eof": False})
+    assert (len(msg) <= 1472), "ERROR: Datagram is longer than 1472 bytes!!!"
+    SEQUENCE += len(section)
+    INPUT.append(msg)
+    section = sys.stdin.read(DATA_SIZE)
+  log("Chunks read: " + str(len(INPUT)))
+  for i in INPUT:
+    log("First chunk starts with " + i[:100])
+    #log("HOpefully this shows the data: " + str(json.loads(i)['data']))
+#first packet
 #send_next_packet()
 
-# Now read in data, send packets
+# Now read in data
+readData()
+
+#now send packets
 while True:
   log("ABOUT TO SLEEP")
-  result = sock.recvfrom(MSG_SIZE)
-
+  #iresult = sock.recvfrom(MSG_SIZE)
+  log("UnACKed: " + str(UNACKED) + ", Window: " + str(WINDOW) + ", Packet Index: " + str(PACKET_NUM))  
   while len(UNACKED) < WINDOW:
-    send_next_packet()
-     
+    send_packet(PACKET_NUM)
+  
+  result = sock.recvfrom(MSG_SIZE)   
   if result:
     (data, addr) = result
     try:
@@ -80,22 +112,27 @@ while True:
 
       #log(str(decoded['ack']) + " -- " + str(UNACKED))     
       # If there is an ack, send next packet
-      if decoded['ack'] in UNACKED:
-        log("[recv ack] " + str(SEQUENCE))
-        WINDOW += 5
-        for d in DATA:
-          if d['sequence'] == decoded['ack']:
-            d['ack'] = True
+      for u in UNACKED: 
+        if decoded['ack'] in u['sequence']:
+          log("[recv ack] " + str(SEQUENCE))
+          WINDOW += 5
+          for d in DATA:
+            if d['sequence'] == decoded['ack']:
+              d['ack'] = True
+              break
+          UNACKED.remove(u)       
+          # Try to send next packet; break if no more data
+          if (not send_packet(PACKET_NUM)):
             break
-        UNACKED.remove(decoded['ack'])       
-        # Try to send next packet; break if no more data
-        if (not send_next_packet()):
-          break
-      else:
-        log("ACKED IMPOSSIBLE THING")
-        #ifor d in DATA:
-        #  if not d['ack']:
-        #    resend_packet(d) 
+          break;
+        else:
+          log("ACKED IMPOSSIBLE THING")
+          log("NUM: " + decoded['ack'])
+          for m in UNACKED:
+            log("UNACKED: " + len(m.keys()) + m['sequence'])
+          #ifor d in DATA:
+          #  if not d['ack']:
+          #    resend_packet(d) 
     except (ValueError, KeyError, TypeError):
       log("[recv corrupt packet]")
   else:
