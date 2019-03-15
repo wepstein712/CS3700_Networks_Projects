@@ -145,6 +145,9 @@ timer_calls = 0
 while True:
   log("ABOUT TO SLEEP")
   log("U: " + str(len(UNACKED)) + ", W: " + str(WINDOW))
+  if WINDOW < 1:
+    WINDOW = 1
+    log("WINDOW WAS BAD")
   #iresult = sock.recvfrom(MSG_SIZE)
   #log("UNACKED: " + str(len(UNACKED)) + ", Window: " + str(WINDOW) + ", Packet Index: " + str(PACKET_NUM))  
  # for u in UNACKED:
@@ -160,6 +163,7 @@ while True:
         log("Timeout?: " + str(int(u[1]) % 100)  + " / " + str(int(CUR_TIME) % 100)) 
         msg_timeout(u)
         send_packet(PACKET_NUM)
+        WINDOW = 1
     
    
   
@@ -195,7 +199,7 @@ while True:
           log("ACKED IMPOSSIBLE THING")
           #log("NUM: " + decoded['ack'])
           PACKET_NUM = calc_packet(decoded['ack'])
-          WINDOW = WINDOW / 2
+          WINDOW = int(WINDOW / 2)
           send_packet(PACKET_NUM)
          #for m in UNACKED:
           #  log("UNACKED: " + len(m.keys())) # + m['sequence'])
