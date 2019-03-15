@@ -12,19 +12,22 @@ import json
 
 MSG_SIZE = 1500
 DATA_SIZE = 1000
-TIMEOUT = 30
+
+# SET THIS BACK TO 30 BEFORE HANDING IN!!!
+TIMEOUT = 3
 SEQUENCE = 0
 WINDOW = 1
 UNACKED = []
 #DATA = []
 INPUT = []
 PACKET_NUM =  0
+
 # Bind to localhost and an ephemeral port
 IP_PORT = sys.argv[1]
 UDP_IP = IP_PORT[0:IP_PORT.find(":")]
 UDP_PORT = int(IP_PORT[IP_PORT.find(":")+1:])
 dest = (UDP_IP, UDP_PORT)
-TIMER = 0.0
+CUR_TIME = 0
 
 # Set up the socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
@@ -73,7 +76,7 @@ def send_packet(index):
   msg = INPUT[index]
   json_object = json.loads(msg)
   #log("THIS IS A TEST: " + str(len(json_object.keys())))
-  UNACKED.append(json_object)
+  UNACKED.append([json_object, int(time.time() + TIMEOUT)])
   if sock.sendto(msg, dest) < len(msg):
     log("[error] unable to fully send packet")
   else:
@@ -104,12 +107,10 @@ def readData():
 #first packet
 #send_next_packet()
 
-# Now read in data
-readData()
 
 def calc_packet(offset):
   global UNACKED
-  index = offset / DATA_SIZE
+  index = int(offset / DATA_SIZE)
   log("CALC_PACKET: " + str(index))
   seq_num = INPUT[index]['sequence']
   new_list = []
@@ -123,17 +124,45 @@ def calc_packet(offset):
   return index
     
 
+def msg_timeout(msg):
+  if json.dumps(msg[0]) in INPUT:
+    log("FOUND IN INPUT: " + str(msg[0]['sequence']))
+    ind =  0
+    for i in INPUT:
+      if (msg[0]['sequence'] == json.loads(i)['sequence']):
+        PACKET_NUM = ind    
+        UNACKED.remove(msg)
+        break
+      ind += 1
+
+readData()
+
+CUR_TIME = int(time.time())
+
+timer_calls = 0
+
 #now send packets
 while True:
   log("ABOUT TO SLEEP")
-  
+  log("U: " + str(len(UNACKED)) + ", W: " + str(WINDOW))
   #iresult = sock.recvfrom(MSG_SIZE)
   #log("UNACKED: " + str(len(UNACKED)) + ", Window: " + str(WINDOW) + ", Packet Index: " + str(PACKET_NUM))  
  # for u in UNACKED:
    # log("Unacked: " + str(u['sequence']))  
   while len(UNACKED) < WINDOW:
     send_packet(PACKET_NUM)
+  if CUR_TIME != int(time.time()):
+    CUR_TIME = int(time.time()) 
+    timer_calls += 1
+    log("TIMER Calls: " + str(timer_calls)) 
+    for u in UNACKED:
+      if u[1] >= CUR_TIME:
+        log("Timeout?: " + str(int(u[1]) % 100)  + " / " + str(int(CUR_TIME) % 100)) 
+        msg_timeout(u)
+        send_packet(PACKET_NUM)
     
+   
+  
   result = sock.recvfrom(MSG_SIZE)   
   if result:
     (data, addr) = result
@@ -148,7 +177,7 @@ while True:
         #log("      u: " + str(u))
 	if decoded['ack'] ==  u['sequence'] + DATA_SIZE :
           log("[recv ack] " + str(decoded['ack']))
-          WINDOW += 1 
+          WINDOW += 5 
           #for d in DATA:
           #  log("got here 2")
           #  if d['sequence'] == decoded['ack']:
@@ -179,6 +208,6 @@ while True:
   else:
     log("[error] timeout")
     sys.exit(-1)
-
+  
 sock.sendto(json.dumps({"eof": True, "data": "", "sequence": SEQUENCE, "ack": False}), dest)
 sys.exit(0)
