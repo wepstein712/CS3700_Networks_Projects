@@ -42,19 +42,16 @@ while True:
 
     try:
       decoded = json.loads(data)
-      log("data recieved")
       # If the EOF flag is set, exit
-      if (decoded['eof'] ):
-        if (check):
-          log("[completed]")
-          sys.exit(0)
-        else:
-          log("not done yet")
-          sys.exit(0)
-
+      if (decoded['eof'] ):   
+        log("[completed]")
+	msg = json.dumps({"ack": 0})
+	sock.sendto(msg,addr)
+	log("Sent EOF confirmation packet")
+        sys.exit(0)
+        
       # If there is data, we accept it and print it out
-      if (decoded['data']):
-        log("decoded data")
+      if (decoded['data']):        
         # If we receive data, we assume it's in-order
         if OFFSET == decoded['sequence']:
           check = True
@@ -66,14 +63,14 @@ while True:
           OFFSET += len(decoded['data'])
           log("Offset: " + str(OFFSET))
           msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])})
-          log("ABOUT TO SEND " + msg)
+          #log("ABOUT TO SEND " + msg)
           if sock.sendto(msg, addr) < len(msg):
             log("[error] unable to fully send packet")
         else:
           check = False
-          log("[recv data " +  str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ") BAD (OUT_OF_ORDER)")
-          msg = json.dumps({"ack": OFFSET})
-          log("ABOUT TO SEND " + str(msg))
+          log("[recv data] " +  str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ") ACCEPTED : RESEND (Duplicate packet, resnding ACK)")
+          msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])}) 
+          #log("ABOUT TO SEND " + str(msg))
           if sock.sendto(msg, addr) < len(msg):
             log("[error] unable to fully send packet")
 
