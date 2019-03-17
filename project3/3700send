@@ -9,7 +9,7 @@ import json
 
 MSG_SIZE = 1500
 DATA_SIZE = 1400
-TIMEOUT = .5
+TIMEOUT = .7
 SEQUENCE = 0
 #Array of sequence #'s yet to be ACK'ed
 UNACKED = []
@@ -18,8 +18,9 @@ UNACKED_LENGTH = 0
 UNACKED_MESSAGES = {}
 UNACKED_MESSAGES_LENGTH = 0
 WINDOW = 1
-THRESH = 100
-MAX = 200
+THRESH = 8 
+MAX = 12
+initial_max = 12
 #Boolean to quit loop (Because you can't double break)
 DONE = False
 #Value for the Retransmission Time-Out
@@ -31,6 +32,10 @@ LAST_RECV = 0
 TIME_ADJUST = 1
 #Boolean for if there needs to be a resend or not
 RESEND = False
+
+#Lossy Network math
+NUM_ACK = 0
+NUM_SENT = 0
 
 # Bind to localhost and an ephemeral port
 IP_PORT = sys.argv[1]
@@ -51,6 +56,8 @@ def send_next_packet():
   global UNACKED_MESSAGES
   global UNACKED_LENGTH
   global UNACKED_MESSAGES_LENGTH
+  global NUM_SENT
+ 
 
   data = sys.stdin.read(DATA_SIZE)
   if (len(data) > 0):
@@ -63,7 +70,7 @@ def send_next_packet():
     UNACKED_MESSAGES[int(SEQUENCE)] = msg
     UNACKED_LENGTH += 1
     UNACKED_MESSAGES_LENGTH += 1
-  
+    NUM_SENT += 1    
     if sock.sendto(msg, dest) < len(msg):
       log("[error] unable to fully send packet")
     else:
@@ -79,7 +86,9 @@ def send_packet(msg):
   global UNACKED_MESSAGES
   global UNACKED_LENGTH
   global UNACKED_MESSAGES_LENGTH
+  global NUM_SENT
 
+  NUM_SENT += 1
   if sock.sendto(msg, dest) < len(msg):
     log("[error] unable to fully send packet")
     return False
@@ -88,6 +97,14 @@ def send_packet(msg):
 
   return True
   
+def calc_loss_and_adjust():
+  global MAX
+  global initial_max
+  MAX = int(initial_max * NUM_ACK / NUM_SENT)
+  if MAX < 1:
+    MAX = 1
+  log("Initial: " + str(initial_max) + ", MAX: " + str(MAX))
+  log("ACK: " + str(NUM_ACK) + ", SENT: " + str(NUM_SENT))
 
 # Send first packet
 send_next_packet()
@@ -102,7 +119,7 @@ while UNACKED_LENGTH > 0:
   except:
     result = None
     log("[error] timeout in sending 1st packet of window")
-    RTO = RTO * 1.5
+    RTO = RTO * 1.1
     sock.settimeout(RTO)
     if TIMEOUT_COUNT == 100:
       log("fatal timeout: closing")
@@ -120,9 +137,10 @@ while UNACKED_LENGTH > 0:
 	RTO = 1.6
     else:
       RTO += ((RTO - (time.time() - LAST_RECV)) * .1) * (1 + (WINDOW / 100))
-      RTO = max(RTO, .01)
+      RTO = max(RTO, .1)
       if RTO > 1 and WINDOW > 8:
 	RTO = RTO * (1 + WINDOW / 100)
+      RTO = min(RTO, 1.5)
       log("Current RTO: " + str(RTO))
     LAST_RECV = time.time()
     #No need to test for the RTO timeout since the RECV should send all ACK's back or it is an actual timeout
@@ -147,11 +165,15 @@ while UNACKED_LENGTH > 0:
 	    UNACKED_LENGTH -= 1
             UNACKED_MESSAGES_LENGTH -= 1
 	    log("UNACKED is now " + str(UNACKED) + " with a length of " + str(UNACKED_LENGTH))
-        
+            NUM_ACK += 1
+
         #Here there is a duplicate ACK, since there is no way to get an ACK not in UNACKED other than because of this
         else:
+	  #Add parameter in the receive packet sent to see if its an error or purposful ACK 
           log("Duped ACK: " + str(ack_seq))
-	  RESEND = True
+	  if decoded['err'] == 1:
+	    #This is the case where the resend is an actual error (drop, ect.)
+	    RESEND = True
       except (ValueError, KeyError, TypeError):
         log("[recv corrupt packet]")
       if UNACKED_LENGTH > 0:
@@ -162,15 +184,16 @@ while UNACKED_LENGTH > 0:
 	  log("[error] timeout while waiting for ACK")
 	  TIMEOUT_COUNT += 1
           WINDOW = 1
-	  RTO = RTO * 1.2
+	  RTO = RTO * 1
     	  for seq in UNACKED:
       	    log("RESENDING: " + str(seq))
             send_packet(UNACKED_MESSAGES[seq])
 	  RESEND = False
 	  break
-
+    
+    calc_loss_and_adjust()
     if UNACKED_LENGTH <= 0 and not RESEND:
-      if WINDOW < THRESH:
+      if WINDOW < THRESH and THRESH < MAX:
         WINDOW = min(WINDOW * 2, THRESH)
       else:
         if WINDOW < MAX:
@@ -183,6 +206,7 @@ while UNACKED_LENGTH > 0:
         log("UNACKED is now " + str(UNACKED))
 	#Up TIME_ADJUST since the Window size fit
         #TIME_ADJUST += 1
+  calc_loss_and_adjust()
   if RESEND:
     WINDOW = 1
     for seq in UNACKED:
