@@ -49,30 +49,51 @@ while True:
 	sock.sendto(msg,addr)
 	log("Sent EOF confirmation packet")
         sys.exit(0)
-        
+
+      data = decoded['data']  
+      data_length = len(data)
+      seq = decoded['sequence']
       # If there is data, we accept it and print it out
-      if (decoded['data']):        
+      if (data):        
         # If we receive data, we assume it's in-order
-        if OFFSET == decoded['sequence']:
-          check = True
-        # You will need to do much more here
-          log("[recv data] " + str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ") ACCEPTED (in-order)")
+        if OFFSET == seq:
+          #check = True
+          # You will need to do much more here
+          log("[recv data] " + str(seq) + " (" + str(data_length) + ") ACCEPTED (in-order)")
           sys.stdout.write(decoded['data'])
-          log("DATA LENGTH: " + str(len(decoded['data'])))         
+          log("DATA LENGTH: " + str(data_length))         
           
-          OFFSET += len(decoded['data'])
+          OFFSET += data_length
           log("Offset: " + str(OFFSET))
-          msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])})
-          #log("ABOUT TO SEND " + msg)
+          msg = json.dumps({"ack": seq + data_length, "err": 0})
+          log("ABOUT TO SEND " + msg)
           if sock.sendto(msg, addr) < len(msg):
             log("[error] unable to fully send packet")
+	  log("ABOUT TO SEND COPY" + msg)
+          if sock.sendto(msg, addr) < len(msg):
+            log("[error] unable to fully send packet")	  
+
         else:
-          check = False
-          log("[recv data] " +  str(decoded['sequence']) + " (" + str(len(decoded['data'])) + ") ACCEPTED : RESEND (Duplicate packet, resnding ACK)")
-          msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])}) 
-          #log("ABOUT TO SEND " + str(msg))
-          if sock.sendto(msg, addr) < len(msg):
-            log("[error] unable to fully send packet")
+	  #Check here for > or < (OFFSET > seq means that its a dupe and just resend ACK, OFFSET < seq means delay/dropped packet, so don't send anything)
+          #check = False
+	  if OFFSET > seq:
+            log("[recv data] " +  str(seq) + " (" + str(data_length) + ") ACCEPTED : RESEND (Duplicate packet, resnding ACK)")
+            msg = json.dumps({"ack": seq + data_length, "err": 0}) 
+            log("ABOUT TO SEND " + str(msg))
+            if sock.sendto(msg, addr) < len(msg):
+              log("[error] unable to fully send packet")
+	    log("ABOUT TO SEND COPY" + str(msg))
+            if sock.sendto(msg, addr) < len(msg):
+              log("[error] unable to fully send packet")
+
+	  else:
+	    #Do nothing, just drop and ignore
+	    log("[recv] dropping packet, delay/drop")
+            log("[recv data] " +  str(seq) + " (" + str(data_length) + ") FAILED : RESEND (Duplicate packet, NACK)")
+            msg = json.dumps({"ack": OFFSET + data_length, "err": 1})
+            log("ABOUT TO SEND " + str(msg))
+            if sock.sendto(msg, addr) < len(msg):
+              log("[error] unable to fully send packet")
 
       # Send back an ack to the sender
       #msg = json.dumps({"ack": decoded['sequence'] + len(decoded['data'])})
