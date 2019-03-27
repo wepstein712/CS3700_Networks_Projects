@@ -2,6 +2,8 @@
 #
 # Project 4 Webcrawler Code
 import urllib2 
+import json
+import socket
 
 from HTMLParser import HTMLParser  
 
@@ -27,7 +29,7 @@ class htmlParser(HTMLParser):
       for name, value in attrs:
         if name == 'href':
           print name,'-', value
-	  if value not in visitted and value not in frontier  and domainCheck(value):
+	  if domainCheck(value) and value not in visitted and value not in frontier:
 	    frontier.append(value)
 	    
          # print "Encountered the beginning of a %s tag" % tag 
@@ -50,10 +52,53 @@ class htmlParser(HTMLParser):
 
 p = htmlParser()
 
-#p.feed('<html><head><title>Fakebook</title><style TYPE="text/css"><!--#pagelist li { display: inline; padding-right: 10px; }--></style></head><body><h1>Fakebook</h1><p><a href="/fakebook/">Home</a></p><hr/><h1>Welcome to Fakebook</h1><p>Get started by browsing some random people"s profiles!</p><ul><li><a href="/fakebook/65223632/">Elisha Metia</a></li><li><a href="/fakebook/66479551/">Cebago Piccard</a></li><li><a href="/fakebook/66491647/">Mimi Ham</a></li><li><a href="/fakebook/66900893/">Holley Attles</a></li><li><a href="/fakebook/67055905/">Duxozo Yoon</a></li><li><a href="/fakebook/68444115/">Rucogi Brudon</a></li><li><a href="/fakebook/69097556/">Nob Guiver</a></li><li><a href="/fakebook/69226724/">Rin Plinac</a></li><li><a href="/fakebook/70552327/">Jimavuzote Jotet</a></li><li><a href="/fakebook/71366663/">Zoc Belinn</a></li></ul><h6>Fakebook is run by Christo Wilson at<a href="http://www.northeastern.edu">NEU</a>. It is meant for educational purposes only.For questions, contact <a href="mailto:cbw@ccs.neu.edu">Christo Wilson</a></h6></body></html>')
+p.feed('<html><head><title>Fakebook</title><style TYPE="text/css"><!--#pagelist li { display: inline; padding-right: 10px; }--></style></head><body><h1>Fakebook</h1><p><a href="/fakebook/">Home</a></p><hr/><h1>Welcome to Fakebook</h1><p>Get started by browsing some random people"s profiles!</p><ul><li><a href="/fakebook/65223632/">Elisha Metia</a></li><li><a href="/fakebook/66479551/">Cebago Piccard</a></li><li><a href="/fakebook/66491647/">Mimi Ham</a></li><li><a href="/fakebook/66900893/">Holley Attles</a></li><li><a href="/fakebook/67055905/">Duxozo Yoon</a></li><li><a href="/fakebook/68444115/">Rucogi Brudon</a></li><li><a href="/fakebook/69097556/">Nob Guiver</a></li><li><a href="/fakebook/69226724/">Rin Plinac</a></li><li><a href="/fakebook/70552327/">Jimavuzote Jotet</a></li><li><a href="/fakebook/71366663/">Zoc Belinn</a></li></ul><h6>Fakebook is run by Christo Wilson at<a href="http://www.northeastern.edu">NEU</a>. It is meant for educational purposes only.For questions, contact <a href="mailto:cbw@ccs.neu.edu">Christo Wilson</a></h6></body></html>')
 p.feed('<html><head><title>Test</title></head>'
        '<body><a href="http://fring.ccs.neu.edu/fakebook/018912/"><h2 class="secret_flag" style="color:red">FLAG: 64-characters-of-random-alphanumerics</h2></a>'
 	'<h1><a href="http://fring.ccs.neu.edu/fakebook/">Parse me!</a></h1><a href="http://fring.ccs.neu.edu/fakebook/018912/">hello</a></body></html>')
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)                 
+s.connect(("fring.ccs.neu.edu" , 80))
+s.sendall("GET /accounts/login/ HTTP/1.1\r\nConnection: keep-alive\r\nHost:fring.ccs.neu.edu\r\n\r\n")
+recv = s.recv(4096)
+recvLines = recv.splitlines()
+print recvLines
+headers = {}
+endofheaders = False
+html = ''
+response = ''
+for line in recvLines:
+  if line == '' or endofheaders:
+    endofheaders = True;
+    html += line
+  else:
+    sep = line.find(':')
+    if sep > 1:
+      if line[:sep] in headers.keys():
+        headers[line[:sep]] =  headers[line[:sep]] +  " \r\n" + line[4:]
+      else:
+        headers[line[:sep]] = line[sep:]
+    else:
+      response = line
+
+htmlLines = html.split(" ")
+
+#print recv
+print json.dumps(headers, indent=4)
+print "Response: " + response
+
+request = ("POST /accounts/login/ HTTP/1.1\r\n" +
+	  "Host: fring.ccs.neu.edu\r\n" +
+	  "Connection: keep-alive\r\n" +
+          "Cookie" + headers['Set-Cookie'] + "\r\n" +
+	  "Content-Type: application/x-www-form-urlencoded\r\n" +
+          "Content-Length: 105\r\n\r\n" 
+	  "username=001299969&password=W7W8ZD8A&next=/fakebook/&csrfmiddlewaretoken" + headers['Set-Cookie'][11:headers['Set-Cookie'].find(';')] + "\r\n")
+#Need to add the csrfmiddlewaretoken to this request
+print request
+s.sendall(request)
+print s.recv(4096)
+
 print p.data
 print("frontier: ", frontier)
 p.close()
