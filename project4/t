@@ -1,0 +1,61 @@
+#!/usr/bin/python -u
+#
+# Project 4 Webcrawler Code
+import urllib2 
+
+from HTMLParser import HTMLParser  
+
+frontier = []
+visitted = []
+
+
+
+def domainCheck(site):
+  spoint = site.find("//") + 2
+  print("DOmain CHeck: ", site[spoint:spoint+17])
+  return True
+
+class htmlParser(HTMLParser):
+
+  def __init__(self):
+    HTMLParser.__init__(self)
+    self.recording = 0 
+    self.data = []
+  def handle_starttag(self, tag, attrs):
+    if tag == 'a':
+      for name, value in attrs:
+        if name == 'href':
+          print name,'-', value
+	  if value not in visitted and value not in frontier  and domainCheck(value):
+	    frontier.append(value)
+	    
+         # print "Encountered the beginning of a %s tag" % tag 
+   #       self.recording = 1 
+    if tag == 'h2':
+      for name, value in attrs:
+        if name == 'class' and value == 'secret_flag':
+	  print "secret flag found:" 
+	  self.recording += 1
+
+  def handle_endtag(self, tag):
+    
+   if tag == 'h2':
+      self.recording -=1 
+      print "Encountered the end of a %s tag" % tag 
+    
+  def handle_data(self, data):
+    if self.recording:
+      self.data.append(data)
+
+p = htmlParser()
+p.feed('<html><head><title>Test</title></head>'
+       '<body><a href="http://fring.ccs.neu.edu/fakebook/018912/"><h2 class="secret_flag" style="color:red">FLAG: 64-characters-of-random-alphanumerics</h2></a>'
+	'<h1><a href="http://fring.ccs.neu.edu/fakebook/">Parse me!</a></h1><a href="http://fring.ccs.neu.edu/fakebook/018912/">hello</a></body></html>')
+print p.data
+print("frontier: ", frontier)
+p.close()
+
+
+
+
+
