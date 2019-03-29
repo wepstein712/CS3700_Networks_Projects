@@ -4,6 +4,7 @@
 import urllib2 
 import json
 import socket
+import sys
 
 from HTMLParser import HTMLParser  
 
@@ -90,48 +91,60 @@ class htmlParser(HTMLParser):
     if self.recording:
       self.data.append(data)
 
-p = htmlParser()
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)                 
-s.connect(("fring.ccs.neu.edu" , 80))
-s.sendall("GET /accounts/login/ HTTP/1.1\r\nConnection: keep-alive\r\nHost:fring.ccs.neu.edu\r\n\r\n")
-recv = s.recv(4096)
-recvLines = recv.splitlines()
-#print recv
-headers = getHeaders(recv)
-html = getHTML(recv)
-response = getResponseCode(recv)
-#print recv
-#print json.dumps(headers, indent=4)
-#print "Response: " + response
+username = ""
+password = ""
 
-request = ("POST /accounts/login/ HTTP/1.1\r\n" +
-	   "Host: fring.ccs.neu.edu\r\n" +
-	   "Connection: keep-alive\r\n" +
-	   "Accept: */*\r\n" +
-           "Cookie: " + headers['Set-Cookie'] + "\r\n" +
-	   "Content-Type: application/x-www-form-urlencoded\r\n" +
-           "Content-Length: 105\r\n\r\n" 
-	   "username=001299969&password=W7W8ZD8A&next=/fakebook/&csrfmiddlewaretoken=" + headers['Set-Cookie'][10:headers['Set-Cookie'].find(';')] + "\r\n")
-#print request
-#Maybe loop here until recv?
-s.sendall(request)
-uri = ""
-msg = s.recv(4096)
-headers = getHeaders(msg)
-responseCode = getResponseCode(msg)
-if responseCode == "302":
-    uri = headers["Location"][24:]
-    #print("URI:" + uri)
+if not (len(sys.argv) == 3):
+  sys.exit()
 else:
-    uri = "/fakebook/"
-request = ("GET " + uri + " HTTP/1.1\r\n" +
-	   "Host: fring.ccs.neu.edu\r\n" +
-	   "Connection: keep-alive\r\n" +
-	   "Accept: */*\r\n" +
-           "Cookie: " + headers['Set-Cookie'] + "\r\n" +
-	   "Content-Type: application/x-www-form-urlencoded\r\n" +
-           "Content-Length: 52\r\n\r\n" 
-	   "csrfmiddlewaretoken=" + headers['Set-Cookie'][10:headers['Set-Cookie'].find(';')] + "\r\n")
+  username = sys.argv[1]
+  password = sys.argv[2]
+  
+
+p = htmlParser()
+response = "500"
+while response == "500":
+  s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)                 
+  s.connect(("fring.ccs.neu.edu" , 80))
+  s.sendall("GET /accounts/login/ HTTP/1.1\r\nConnection: keep-alive\r\nHost:fring.ccs.neu.edu\r\n\r\n")
+  recv = s.recv(4096)
+  recvLines = recv.splitlines()
+  headers = getHeaders(recv)
+  html = getHTML(recv)
+  response = getResponseCode(recv)
+  if response == "500":
+    s.close()
+  request = ("POST /accounts/login/ HTTP/1.1\r\n" +
+      "Host: fring.ccs.neu.edu\r\n" +
+      "Connection: keep-alive\r\n" +
+      "Accept: */*\r\n" +
+            "Cookie: " + headers['Set-Cookie'] + "\r\n" +
+      "Content-Type: application/x-www-form-urlencoded\r\n" +
+            "Content-Length: 105\r\n\r\n" 
+      "username=" + username + "&password=" + password + "&next=/fakebook/&csrfmiddlewaretoken=" + headers['Set-Cookie'][10:headers['Set-Cookie'].find(';')] + "\r\n")
+  s.sendall(request)
+  uri = ""
+  msg = s.recv(4096)
+  headers = getHeaders(msg)
+  if headers != {}:
+    print("RECV: " + msg)
+    print("Headers: " + json.dumps(headers, indent=4))
+    responseCode = getResponseCode(msg)
+    if responseCode == "302":
+        uri = headers["Location"][24:]
+        #print("URI:" + uri)
+    else:
+        uri = "/fakebook/"
+    request = ("GET " + uri + " HTTP/1.1\r\n" +
+        "Host: fring.ccs.neu.edu\r\n" +
+        "Connection: keep-alive\r\n" +
+        "Accept: */*\r\n" +
+              "Cookie: " + headers['Set-Cookie'] + "\r\n" +
+        "Content-Type: application/x-www-form-urlencoded\r\n" +
+              "Content-Length: 52\r\n\r\n" 
+        "csrfmiddlewaretoken=" + headers['Set-Cookie'][10:headers['Set-Cookie'].find(';')] + "\r\n")
+  else:
+    response = "500"
 Cookie = headers['Set-Cookie'][:43]
 s.sendall(request)
 msg = s.recv(4096)
@@ -170,6 +183,7 @@ while len(frontier) > 0 and len(p.data) < 5:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)                 
         s.connect(("fring.ccs.neu.edu" , 80))
   else:
+    frontier.append(nextURI)
     s.close()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)                 
     s.connect(("fring.ccs.neu.edu" , 80))
