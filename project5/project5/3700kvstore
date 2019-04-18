@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import sys, socket, select, time, json, random
+from datetime import datetime
 
 # Your ID number
 my_id = sys.argv[1]
@@ -11,6 +12,26 @@ puts = {}
 msg_num = 0
 queue = []
 
+# Our Info
+curentTerm = 0
+votedFor = None
+log = []
+
+commitIndex = 0
+lastApplied = 0
+
+# Leader Info
+nextIndex = []
+matchIndex = []
+
+# Election
+term = 0
+lastLogIndex = 0
+lastLogTerm = 0
+
+voted = []
+
+
 # The ID numbers of all the other replicas
 replica_ids = sys.argv[2:]
 
@@ -20,6 +41,9 @@ sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
 sock.connect(my_id)
 
 last = 0
+
+#TODO: 
+# - 
 
 def put(text):
   #IF we don't have a leader, define one, constant for now
@@ -33,7 +57,8 @@ def put(text):
     dst = text['src']
     packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID']}
     sendSimple(packet)
-
+    #TODO: Fix if there is too much data/time usage
+    log.append(packet)
 
 def get(text):
  #text = json.dumps(msg)
@@ -45,7 +70,10 @@ def get(text):
     value = ""
     if text['key'] in list(puts.keys()):
       value = puts[text['key']]
-    packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID'], "value": value}
+      packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID'], "value": value}
+    else:
+      print "FAIL @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
+      packet =  {"src": src, "dst": dst, "leader": leader_id, "type": "fail"}
     sendSimple(packet)
 
 def redirect(msg):
@@ -65,39 +93,107 @@ def sendSimple(msg):
   sock.send(json.dumps(msg))
   print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
   msg_num = msg_num + 1
-def sendAll(mag):
-  return True
+  
+def sendAll(msg):
+	for rid in replica_ids:
+		msg['dst'] = rid
+		msg['src'] = my_id
+		print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
+	  	
+		sock.send(json.dumps(msg))	 
+
+def sendHeartbeat():
+	for rep_id in replica_ids:
+		msg = {'src': my_id, 'dst': rep_id, 'leader': leader_id, 'type': 'beat'}
+                sock.send(json.dumps(msg))
+                print '%s sending a Heartbeat to %s' % (msg['src'], msg['dst'])
+
+def elect():
+	global term, votedFor, voted
+	term = term + 1
+	msg = {"src": my_id, "dst": None, "leader": my_id, "type": "election", "term": term, "lastLogIndex": lastLogIndex, "lastLogTerm": lastLogTerm}	
+	sendAll(msg)
+	voted.append(my_id)
+	votedFor = my_id
+
+def vote(msg):
+	global votedFor, term
+	v = True
+	if msg['term'] <= term:
+		v = False
+		print ("TOO LATE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+	else:
+		if votedFor == None or votedFor == msg['src']:
+			if msg['lastLogIndex'] >= lastLogIndex:
+				voteFor = msg['src']
+	src = msg['dst']
+        dst = msg['src']
+        packet = {"src": src, "dst": dst, "leader": dst, "type": "vote", "response": v, "term": msg['term']}
+	sendSimple(packet)
+
+def tally(msg):
+	global term, votedFor, leader_id
+	#Check for right term here
+	if not msg['src'] in voted:
+		voted.append(msg['src'])
+		if len(voted) > len(replica_ids) / 2 and term == msg['term']:
+			votedFor = None
+			leader_id = my_id
+			print "Leader ID :" + str(leader_id)
+			#TODO add more later when we implement it
+			msg = {'src': my_id, 'dst': None, 'leader': leader_id, 'term': term, 'type': 'hello'}
+			sendAll(msg)
+			sendHeartbeat()
+
+def yes_sir(msg):
+	global leader_id, votedFor, term
+	leader_id = msg['leader']
+	votedFor = None
+	term = msg['term']
+	#Data validation here
+
+waitTime = random.uniform(150,300)
+print "Wait time for " + str(my_id) + " is :" + str(waitTime)
+clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
+last = clock
+print "Clock: " + str(clock)
 
 while True:
 	ready = select.select([sock], [], [], 0.1)[0]
 	
 	if sock in ready:
 		msg_raw = sock.recv(32768)
-		
+
 		if len(msg_raw) == 0: continue
 		msg = json.loads(msg_raw)
+		queue.append(msg)
 		
 		# For now, ignore get() and put() from clients
-		if msg['type'] in ['get', 'put']:
+		if msg['type'] in ['get', 'put', 'election', 'vote', 'hello', 'beat']:
                         if msg['type'] == 'get':
 			  get(msg)
 			if msg['type'] == 'put':
 			  put(msg)
-			if msg['type'] == 'bump':
-			  pass
+			if msg['type'] == 'election':
+			  vote(msg)
+			if msg['type'] == 'vote':
+			  tally(msg)
+			if msg['type'] == 'hello':
+			  yes_sir(msg)
+			if msg['type'] == 'beat':
+			  print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
+			  last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 			#print json.dumps(msg, indent=4)
-		
-		# Handle noop messages. This may be removed from your final implementation
-		elif msg['type'] == 'noop':
-			print '%s received a NOOP from %s' % (msg['dst'], msg['src'])
-			#print json.dumps(msg, indent=4)
-	clock = time.time()
-	if clock-last > .1:
-		# Send a no-op message to a random peer every two seconds, just for fun
-		# You definitely want to remove this from your implementation
-		msg = {'src': my_id, 'dst': random.choice(replica_ids), 'leader': leader_id, 'type': 'noop'}
-		sock.send(json.dumps(msg))
-		print '%s sending a NOOP to %s' % (msg['src'], msg['dst'])
-  		print "PUTS SIZE: " + str(len(list(puts.keys()))) + "\n NUM MESSAGES: " + str(msg_num)
+	clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
+	if clock-last > 70 and leader_id == my_id:
+		sendHeartbeat()
+		last=clock
+	
+	if clock-last > waitTime and leader_id != my_id and votedFor == None:
+		print "Voted for: " + str(votedFor)
+		print "Time diff: " + str(clock-last)
+		clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 		last = clock
+		elect()
+	#print "PUTS SIZE: " + str(len(list(puts.keys()))) + "\n NUM MESSAGES: " + str(msg_num)
 print "Length of puts: " + str(len(puts)) 
