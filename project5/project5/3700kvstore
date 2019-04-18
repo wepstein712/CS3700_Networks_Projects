@@ -11,6 +11,8 @@ leader_id = '0001'
 puts = {}
 msg_num = 0
 queue = []
+currentTask = None
+curWorking = False
 
 # Our Info
 curentTerm = 0
@@ -24,6 +26,8 @@ lastApplied = 0
 nextIndex = []
 matchIndex = []
 
+ackCount = 0
+cachedPacket = None
 # Election
 term = 0
 lastLogIndex = 0
@@ -46,17 +50,23 @@ last = 0
 # - 
 
 def put(text):
+  global curWorking, ackCount, cachedPacket
   #IF we don't have a leader, define one, constant for now
   #text = json.dumps(msg)
   if redirect(text):
+    curWorking = False
     return
+
   else:
     #did not redirect, need to put
-    puts[text['key']] = text['value'] 
+    puts[text['key']] = text['value']
+    ackCount = 0 
+    packet = {"src": my_id, "dst": text['src'], "type": 'append', 'leader': leader_id, 'entries': ['key': text['key'], 'value': text['value']], 'leaderIndex': commitIndex, 'term': term, 'commitIndex': commitIndex, 'prevLogTerm': log[(len(log) - 1]['term']}
+    sendAll(packet); 
     src = text['dst']
     dst = text['src']
-    packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID']}
-    sendSimple(packet)
+    cachedPacket = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID']}
+    #response to client only on quarom sendSimple(packet)
     #TODO: Fix if there is too much data/time usage
     log.append(packet)
 
@@ -138,6 +148,7 @@ def tally(msg):
 		voted.append(msg['src'])
 		if len(voted) > len(replica_ids) / 2 and term == msg['term']:
 			votedFor = None
+			voted = []
 			leader_id = my_id
 			print "Leader ID :" + str(leader_id)
 			#TODO add more later when we implement it
@@ -151,6 +162,34 @@ def yes_sir(msg):
 	votedFor = None
 	term = msg['term']
 	#Data validation here
+
+
+def appendCheck(msg):
+  global term, commitIndex
+  v = False
+  if len(log) < msg['commitIndex'] or msg['term'] < term or log[msg['commitIndex']]['term'] not equal msg['prevLogTerm']):
+    v = False
+  else:
+    v = True
+    if len(log) > msg['commitIndex']:
+      log = log[:msg['commitIndex'] + 1]
+    log.append(msg)
+    for ents in msg['entries']:
+      puts[ents['key']] = ents['value']
+      #may need to funk with the math for blocking entries
+    commitIndex = min(msg['commitIndex'], len(log)-1) #both leader and reciever do a -1 on the commit index, may cause off by 1's check!!!!)
+  packet = {"src": my_id, "dst": msg['src'], "leader": leader, "type": "appendResponse",'commitIndex': msg['commitIndex'],  "response": v, "term": term]}
+  sendSimple(packet)
+
+def handleAppend(msg):
+  global ackCount
+  if msg['response'] == True:
+    if msg['src'] not in ackCount:
+      ackCount.append(msg['src']
+      if len(ackCount) > replica_ids / 2 and msg['commitIndex'] == commitIndex:
+	curWorking = False
+        simpleSend(cachedPacket)
+  #FIGURE OUT WHAT FALSE DOES, nextIndex & matchIndex used here
 
 waitTime = random.uniform(150,300)
 print "Wait time for " + str(my_id) + " is :" + str(waitTime)
@@ -167,11 +206,16 @@ while True:
 		if len(msg_raw) == 0: continue
 		msg = json.loads(msg_raw)
 		queue.append(msg)
-		
+	if not curWorking and len(queue) > 0
+	  	curWorking = True
+		currentTask = queue[0]
+		queue = queue[1:]
+		msg = currentTask
 		# For now, ignore get() and put() from clients
-		if msg['type'] in ['get', 'put', 'election', 'vote', 'hello', 'beat']:
+		if msg['type'] in ['get', 'put', 'election', 'vote', 'hello', 'beat', 'append', 'appendResponse']:
                         if msg['type'] == 'get':
 			  get(msg)
+			  curWorking = False
 			if msg['type'] == 'put':
 			  put(msg)
 			if msg['type'] == 'election':
@@ -180,6 +224,10 @@ while True:
 			  tally(msg)
 			if msg['type'] == 'hello':
 			  yes_sir(msg)
+			if msg['type' = 'append':
+			  appendCheck(msg)
+			if msg['type'] = 'appendResponse':
+			  handleAppend(msg)
 			if msg['type'] == 'beat':
 			  print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
 			  last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
