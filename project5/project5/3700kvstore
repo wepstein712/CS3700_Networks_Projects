@@ -8,14 +8,12 @@ my_id = sys.argv[1]
 
 leader_id = '0001' 
 
-puts = {}
+stateMachine = {}
 msg_num = 0
 queue = []
-currentTask = None
-curWorking = False
+lock = False
 
 # Our Info
-curentTerm = 0
 votedFor = None
 log = []
 
@@ -26,14 +24,27 @@ lastApplied = 0
 nextIndex = []
 matchIndex = []
 
-ackCount = 0
-cachedPacket = None
 # Election
-term = 0
+term = 0 
 lastLogIndex = 0
 lastLogTerm = 0
 
 voted = []
+
+# Append Info
+prevLogIndex = 0
+prevLogTerm = 0
+
+entries = []
+quorum = []
+cachedPackets = []
+cachedPuts = {}
+
+batchSize = 3
+
+# Time stuff
+clock = None
+last = None
 
 
 # The ID numbers of all the other replicas
@@ -50,78 +61,150 @@ last = 0
 # - 
 
 def put(text):
-  global curWorking, ackCount, cachedPacket
-  #IF we don't have a leader, define one, constant for now
-  #text = json.dumps(msg)
-  if redirect(text):
-    curWorking = False
-    return
+	global lock, cachedPuts, log, commitIndex, cachedPackets, entries
+	#IF we don't have a leader, define one, constant for now
+  	#text = json.dumps(msg)
+	#print "Put Request: " + json.dumps(text, indent=4)
+  	if redirect(text):
+    		return
+  	else:
+		key = text['key']
+		val = text['value']
+		#print "Key - " + str(key) + " : Value - " + str(val)
+    		#did not redirect, we know we are leader, need to lock system, send appends to followers, get quorum, and commit
+    		cachedPuts[key] = val
+		commitIndex = commitIndex + 1
+		log.append({key: val, 'term': term})
+		#Loop here for blocking in the future, make sure to not lock while building a block
+		entries.append([key, val, term])
+		if len(entries) >= batchSize:
+			lock = True
+			if len(log) > batchSize:
+                	        prevLogIndex = len(log) - batchSize - 1
+        	                prevLogTerm = log[prevLogIndex]['term']
+	                else:
+                        	prevLogIndex = -1
+                        	prevLogTerm = -1
 
-  else:
-    #did not redirect, need to put
-    puts[text['key']] = text['value']
-    ackCount = 0 
-    packet = {"src": my_id, "dst": text['src'], "type": 'append', 'leader': leader_id, 'entries': ['key': text['key'], 'value': text['value']], 'leaderIndex': commitIndex, 'term': term, 'commitIndex': commitIndex, 'prevLogTerm': log[(len(log) - 1]['term']}
-    sendAll(packet); 
-    src = text['dst']
-    dst = text['src']
-    cachedPacket = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID']}
-    #response to client only on quarom sendSimple(packet)
-    #TODO: Fix if there is too much data/time usage
-    log.append(packet)
+			append(entries)
+			entries = []
+    		src = text['dst']
+    		dst = text['src']
+    		packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID']}
+		cachedPackets.append(packet)
 
+def append(ents):
+	#Args: term, leader_id, prevLogIndex, prevLogTerm, entries[], leaderCommit, src, dst, type
+	packet = {'src': my_id, 'dst': None, 'leader': my_id, 'type': 'append', 'term': term, 'prevLogIndex': prevLogIndex, 'prevLogTerm': prevLogTerm, 'entries': ents, 'leaderCommit': commitIndex}
+	sendAll(packet)
+
+def confirm(msg):
+	global log, term, prevLogIndex, stateMachine
+	succ = True
+	src = msg['dst']
+        dst = msg['src']
+	pIndex = msg['prevLogIndex']
+	if msg['term'] < term:
+		succ = False
+		#print "Leader's term is less than follower's term\n"
+	if pIndex != 0 and (len(log) <= pIndex or log[pIndex][2] != msg['prevLogTerm']):
+		succ = False
+		#print "Log index mismatch or term mismatch in log\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+		#print "Log length:" + str(len(log)) + " vs " + str(pIndex)
+		if len(log) > pIndex:
+			print "Previous term: " + str(log[pIndex][2]) + " vs " + msg['prevLogTerm']
+	if succ:
+		log = log[:pIndex + 1]
+		prevLogIndex = pIndex
+		prevLogTerm = term
+		for entry in msg['entries']:
+			log.append({entry[0]:entry[1], 'term':entry[2]})
+			stateMachine[entry[0]] = entry[1]
+		#TODO: Update the stateMachine here based on log
+	packet = {'src':src, 'dst':dst, 'leader': leader_id, 'type': 'confirm', 'success': succ, 'term': term, 'leaderCommit': msg['leaderCommit']}
+	sendSimple(packet)
+
+def tallyQuorum(msg):
+	global commitIndex, term, quorum, cachedPackets, cachedPuts, lock
+	if msg['success']:
+		#Check what commit this is for
+		if msg['term'] == term and msg['leaderCommit'] == commitIndex:
+			if not msg['src'] in quorum:
+				quorum.append(msg['src'])
+			if len(quorum) >= len(replica_ids) / 2:
+				#print "Commiting packet :" + str(quorum) + " all agreed\n"
+				#print json.dumps(cachedPacket, indent=4)
+				for pack in cachedPackets:
+					sendSimple(pack)
+				for put in cachedPuts.keys():
+					stateMachine[put] = cachedPuts[put]
+				cachedPackets = []
+				cachedPuts = {}
+				commitIndex = commitIndex + 1
+				lock = False
+				quorum = []
+	else:
+		#Elect new leader here, leader should shutdown/demote itself
+		#print "Need to elect new leader, FAILURE in put\n"
+		return
 def get(text):
- #text = json.dumps(msg)
-  if redirect(text):
-    return
-  else:
-    src = text['dst']
-    dst = text['src']
-    value = ""
-    if text['key'] in list(puts.keys()):
-      value = puts[text['key']]
-      packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID'], "value": value}
-    else:
-      print "FAIL @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
-      packet =  {"src": src, "dst": dst, "leader": leader_id, "type": "fail"}
-    sendSimple(packet)
+ 	#text = json.dumps(msg)
+ 	if redirect(text):
+    		return
+  	else:
+		#print "GETTING FOR: " + json.dumps(text, indent=4)
+    		src = text['dst']
+    		dst = text['src']
+		key = text['key']
+    		value = ""
+    		if key in list(stateMachine.keys()):
+      			value = stateMachine[key]
+      			packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID'], "value": value}
+			#print "SENDING GET KEY :" + str(key)
+			#print "SENDING GET VAL :" + str(value)
+    		else:
+      			#print "FAIL - GET - @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
+      			packet =  {"src": src, "dst": dst, "leader": leader_id, "type": "fail", "MID": text['MID']}
+	#print json.dumps(packet, indent=4)
+	#print "Get for: " + str(text['MID'])
+	sendSimple(packet)
 
 def redirect(msg):
-  if leader_id == my_id:
-    return False
-  else:
-    src = msg['dst']
-    dst = msg['src']
-    MID = msg['MID']
-    packet = {"src": src, "dst": dst, "leader": leader_id, "type": "redirect", "MID": MID}
-    print "REDIRECTING: ##################################################"
-    sendSimple(packet)
-  return True
+  	if leader_id == my_id:
+    		return False
+  	else:
+    		src = msg['dst']
+    		dst = msg['src']
+    		MID = msg['MID']
+    		packet = {"src": src, "dst": dst, "leader": leader_id, "type": "redirect", "MID": MID}
+    		#print "REDIRECTING: ##################################################"
+    		sendSimple(packet)
+  		return True
 
 def sendSimple(msg):
-  global msg_num
-  sock.send(json.dumps(msg))
-  print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
-  msg_num = msg_num + 1
+  	global msg_num
+  	sock.send(json.dumps(msg))
+  	#print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
+  	msg_num = msg_num + 1
   
 def sendAll(msg):
 	for rid in replica_ids:
 		msg['dst'] = rid
 		msg['src'] = my_id
-		print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
-	  	
+		#print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
 		sock.send(json.dumps(msg))	 
 
 def sendHeartbeat():
 	for rep_id in replica_ids:
 		msg = {'src': my_id, 'dst': rep_id, 'leader': leader_id, 'type': 'beat'}
                 sock.send(json.dumps(msg))
-                print '%s sending a Heartbeat to %s' % (msg['src'], msg['dst'])
+                #print '%s sending a Heartbeat to %s' % (msg['src'], msg['dst'])
 
 def elect():
 	global term, votedFor, voted
 	term = term + 1
 	msg = {"src": my_id, "dst": None, "leader": my_id, "type": "election", "term": term, "lastLogIndex": lastLogIndex, "lastLogTerm": lastLogTerm}	
+	#print "New Election Announcement: "# + json.dumps(msg, indent=4)
 	sendAll(msg)
 	voted.append(my_id)
 	votedFor = my_id
@@ -131,7 +214,7 @@ def vote(msg):
 	v = True
 	if msg['term'] <= term:
 		v = False
-		print ("TOO LATE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+		#print ("TOO LATE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
 	else:
 		if votedFor == None or votedFor == msg['src']:
 			if msg['lastLogIndex'] >= lastLogIndex:
@@ -139,6 +222,7 @@ def vote(msg):
 	src = msg['dst']
         dst = msg['src']
         packet = {"src": src, "dst": dst, "leader": dst, "type": "vote", "response": v, "term": msg['term']}
+	#print "Vote response: "# + json.dumps(packet, indent=4)
 	sendSimple(packet)
 
 def tally(msg):
@@ -148,13 +232,12 @@ def tally(msg):
 		voted.append(msg['src'])
 		if len(voted) > len(replica_ids) / 2 and term == msg['term']:
 			votedFor = None
-			voted = []
 			leader_id = my_id
-			print "Leader ID :" + str(leader_id)
-			#TODO add more later when we implement it
+			#print "Leader ID :" + str(leader_id)
+			#TODO 
 			msg = {'src': my_id, 'dst': None, 'leader': leader_id, 'term': term, 'type': 'hello'}
+			#print "New Leader Announcement: "# + json.dumps(msg, indent=4)
 			sendAll(msg)
-			sendHeartbeat()
 
 def yes_sir(msg):
 	global leader_id, votedFor, term
@@ -163,85 +246,91 @@ def yes_sir(msg):
 	term = msg['term']
 	#Data validation here
 
-
-def appendCheck(msg):
-  global term, commitIndex
-  v = False
-  if len(log) < msg['commitIndex'] or msg['term'] < term or log[msg['commitIndex']]['term'] not equal msg['prevLogTerm']):
-    v = False
-  else:
-    v = True
-    if len(log) > msg['commitIndex']:
-      log = log[:msg['commitIndex'] + 1]
-    log.append(msg)
-    for ents in msg['entries']:
-      puts[ents['key']] = ents['value']
-      #may need to funk with the math for blocking entries
-    commitIndex = min(msg['commitIndex'], len(log)-1) #both leader and reciever do a -1 on the commit index, may cause off by 1's check!!!!)
-  packet = {"src": my_id, "dst": msg['src'], "leader": leader, "type": "appendResponse",'commitIndex': msg['commitIndex'],  "response": v, "term": term]}
-  sendSimple(packet)
-
-def handleAppend(msg):
-  global ackCount
-  if msg['response'] == True:
-    if msg['src'] not in ackCount:
-      ackCount.append(msg['src']
-      if len(ackCount) > replica_ids / 2 and msg['commitIndex'] == commitIndex:
-	curWorking = False
-        simpleSend(cachedPacket)
-  #FIGURE OUT WHAT FALSE DOES, nextIndex & matchIndex used here
+def handleMessage(msg):
+	global queue, last
+	if msg['type'] == 'put':
+			if not lock:
+				if len(queue) > 0:
+					queue.append(msg)
+					msg = queue[0]
+					if len(queue) <= 1:
+						queue = []
+						#print "Popped " + str(msg['MID']) + " from queue, queue is now: " + str(len(queue))
+					else:
+						queue = queue[1:]
+						#print "Popped " + str(msg['MID']) + " from queue, queue is now: " + str(len(queue))
+				if msg['type'] == 'put':
+			  		put(msg)
+			else:
+				queue.append(msg)
+				#print "Added to queue, is now: " + str(len(queue))
+	else:
+		#TODO: Make this a switch case
+		if msg['type'] == 'confirm':
+			tallyQuorum(msg)	
+		elif msg['type'] == 'get':
+			get(msg)
+		elif msg['type'] == 'append':
+			confirm(msg)
+		elif msg['type'] == 'election':
+			vote(msg)
+		elif msg['type'] == 'vote':
+			tally(msg)
+		elif msg['type'] == 'hello':
+			last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
+			yes_sir(msg)
+		elif msg['type'] == 'beat':
+			#print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
+			last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
+	#print "Queue so far: " + str(queue)
 
 waitTime = random.uniform(150,300)
-print "Wait time for " + str(my_id) + " is :" + str(waitTime)
+#print "Wait time for " + str(my_id) + " is :" + str(waitTime)
+time.sleep(.6)
 clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 last = clock
-print "Clock: " + str(clock)
+#print "Clock: " + str(clock)
+
 
 while True:
 	ready = select.select([sock], [], [], 0.1)[0]
 	
 	if sock in ready:
 		msg_raw = sock.recv(32768)
+		msg = None
 
-		if len(msg_raw) == 0: continue
-		msg = json.loads(msg_raw)
-		queue.append(msg)
-	if not curWorking and len(queue) > 0
-	  	curWorking = True
-		currentTask = queue[0]
-		queue = queue[1:]
-		msg = currentTask
-		# For now, ignore get() and put() from clients
-		if msg['type'] in ['get', 'put', 'election', 'vote', 'hello', 'beat', 'append', 'appendResponse']:
-                        if msg['type'] == 'get':
-			  get(msg)
-			  curWorking = False
-			if msg['type'] == 'put':
-			  put(msg)
-			if msg['type'] == 'election':
-			  vote(msg)
-			if msg['type'] == 'vote':
-			  tally(msg)
-			if msg['type'] == 'hello':
-			  yes_sir(msg)
-			if msg['type' = 'append':
-			  appendCheck(msg)
-			if msg['type'] = 'appendResponse':
-			  handleAppend(msg)
-			if msg['type'] == 'beat':
-			  print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
-			  last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
-			#print json.dumps(msg, indent=4)
+		if len(msg_raw) == 0: 
+			if len(queue) <= 0:
+				if len(entries) == 0:
+					continue
+				else:
+					append(entries)
+					print "FINAL APPEND"
+		else:
+			msg = json.loads(msg_raw)
+		# Handle special cases of get() and put()
+		handleMessage(msg)
+		#print json.dumps(msg, indent=4)
+	else:
+		if len(queue) > 0 and leader_id == my_id:
+			#print "Non-socket message ***************************************************************************"
+			msg = queue[0]
+			if len(queue) <= 1:
+				queue = []
+			else:
+				queue = queue[1:]
+			handleMessage(msg)
+
 	clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 	if clock-last > 70 and leader_id == my_id:
 		sendHeartbeat()
 		last=clock
 	
 	if clock-last > waitTime and leader_id != my_id and votedFor == None:
-		print "Voted for: " + str(votedFor)
-		print "Time diff: " + str(clock-last)
+		#print "Voted for: " + str(votedFor)
+		#print "Time diff: " + str(clock-last)
 		clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 		last = clock
 		elect()
-	#print "PUTS SIZE: " + str(len(list(puts.keys()))) + "\n NUM MESSAGES: " + str(msg_num)
-print "Length of puts: " + str(len(puts)) 
+	#print "stateMachine SIZE: " + str(len(list(stateMachine.keys()))) + "\n NUM MESSAGES: " + str(msg_num)
+#print "Length of stateMachine: " + str(len(stateMachine)) 
