@@ -45,7 +45,6 @@ batchSize = 3
 # Time stuff
 clock = None
 last = None
-ackClock = None
 
 
 # The ID numbers of all the other replicas
@@ -55,6 +54,8 @@ replica_ids = sys.argv[2:]
 # occur over this socket
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
 sock.connect(my_id)
+
+last = 0
 
 #TODO: 
 # - 
@@ -75,7 +76,7 @@ def put(text):
 		commitIndex = commitIndex + 1
 		log.append({key: val, 'term': term})
 		#Loop here for blocking in the future, make sure to not lock while building a block
-		entries.append([key, val, term, text['src'], text['MID']])
+		entries.append([key, val, term])
 		if len(entries) >= batchSize:
 			lock = True
 			if len(log) > batchSize:
@@ -145,8 +146,7 @@ def tallyQuorum(msg):
 	else:
 		#Elect new leader here, leader should shutdown/demote itself
 		#print "Need to elect new leader, FAILURE in put\n"
-		return	
-
+		return
 def get(text):
  	#text = json.dumps(msg)
  	if redirect(text):
@@ -157,13 +157,13 @@ def get(text):
     		dst = text['src']
 		key = text['key']
     		value = ""
-		print "LOOKING FOR KEY: " + str(key)
     		if key in list(stateMachine.keys()):
       			value = stateMachine[key]
       			packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID'], "value": value}
-			print "SENDING GET VAL :" + str(value)
+			#print "SENDING GET KEY :" + str(key)
+			#print "SENDING GET VAL :" + str(value)
     		else:
-      			print "FAIL - GET - @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
+      			#print "FAIL - GET - @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
       			packet =  {"src": src, "dst": dst, "leader": leader_id, "type": "fail", "MID": text['MID']}
 	#print json.dumps(packet, indent=4)
 	#print "Get for: " + str(text['MID'])
@@ -184,21 +184,21 @@ def redirect(msg):
 def sendSimple(msg):
   	global msg_num
   	sock.send(json.dumps(msg))
-  	print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
+  	#print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
   	msg_num = msg_num + 1
   
 def sendAll(msg):
 	for rid in replica_ids:
 		msg['dst'] = rid
 		msg['src'] = my_id
-		print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
+		#print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ \n" + json.dumps(msg, indent=4)
 		sock.send(json.dumps(msg))	 
 
 def sendHeartbeat():
 	for rep_id in replica_ids:
 		msg = {'src': my_id, 'dst': rep_id, 'leader': leader_id, 'type': 'beat'}
                 sock.send(json.dumps(msg))
-                print '%s sending a Heartbeat to %s' % (msg['src'], msg['dst'])
+                #print '%s sending a Heartbeat to %s' % (msg['src'], msg['dst'])
 
 def elect():
 	global term, votedFor, voted
@@ -245,18 +245,6 @@ def yes_sir(msg):
 	votedFor = None
 	term = msg['term']
 	#Data validation here
-	if len(queue) > 0 or len(entries) > 0:
-		failAll()
-
-def failAll():
-	for item in queue:
-		#Check for valid components
-		print "This is the item being revoked: " + json.dumps(item, indent=4)
-		packet =  {"src": my_id, "dst": item['src'], "leader": my_id, "type": "fail", "MID": item['MID']}
-		sendSimple(packet)
-	#for ent in entries:
-		#packet =  {"src": my_id, "dst": ent[3], "leader": my_id, "type": "fail", "MID": ent['MID']}
-		#sendSimple(packet)
 
 def handleMessage(msg):
 	global queue, last
@@ -283,42 +271,29 @@ def handleMessage(msg):
 		elif msg['type'] == 'get':
 			get(msg)
 		elif msg['type'] == 'append':
-			print "RESET TIMER"
 			confirm(msg)
-			last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 		elif msg['type'] == 'election':
 			vote(msg)
 		elif msg['type'] == 'vote':
 			tally(msg)
 		elif msg['type'] == 'hello':
-			print "RESET TIMER"
 			last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 			yes_sir(msg)
 		elif msg['type'] == 'beat':
-			print "RESET TIMER"
-			print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
+			#print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
 			last = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 	#print "Queue so far: " + str(queue)
 
-waitTime = random.uniform(200,300)
-print "Wait time for " + str(my_id) + " is :" + str(waitTime)
-time.sleep(1.7)
+waitTime = random.uniform(150,300)
+#print "Wait time for " + str(my_id) + " is :" + str(waitTime)
+time.sleep(.6)
 clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 last = clock
-ackClock = clock
-print "Clock: " + str(clock)
+#print "Clock: " + str(clock)
 
 
 while True:
 	ready = select.select([sock], [], [], 0.1)[0]
-
-	clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
-        if clock-last > 70 and leader_id == my_id:
-                if len(entries) > 0 and not lock:
-                        append(entries)
-                else:
-                        sendHeartbeat()
-                	last=clock
 	
 	if sock in ready:
 		msg_raw = sock.recv(32768)
@@ -348,15 +323,12 @@ while True:
 
 	clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 	if clock-last > 70 and leader_id == my_id:
-		if len(entries) > 0 and not lock:
-			append(entries)
-		else:
-			sendHeartbeat()
-			last=clock
+		sendHeartbeat()
+		last=clock
 	
 	if clock-last > waitTime and leader_id != my_id and votedFor == None:
-		print "Voted for: " + str(votedFor)
-		print "Time diff: " + str(clock-last)
+		#print "Voted for: " + str(votedFor)
+		#print "Time diff: " + str(clock-last)
 		clock = datetime.now().second * 1000 + datetime.now().microsecond / 1000
 		last = clock
 		elect()
