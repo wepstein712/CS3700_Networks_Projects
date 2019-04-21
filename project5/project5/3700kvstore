@@ -219,7 +219,10 @@ def get(text):
       			packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID'], "value": value}
 			#print "SENDING GET KEY :" + str(key)
 			#print "SENDING GET VAL :" + str(value)
-    		else:
+		else:
+			for put in cachedPuts:
+				if put['key'] == key:
+					print "ITS IN THE CACHE %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%"
 			#print "SENDING GET KEY :" + str(key)
                         #print "SENDING GET VAL :" + str(value)
       			#print "FAIL - GET - @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
@@ -313,7 +316,7 @@ def tally(msg):
 			electionQueue = []
 
 def yes_sir(msg):
-	global leader_id, votedFor, term, electionQueue, cachedPuts, redirectPause
+	global leader_id, votedFor, term, electionQueue, cachedPackets, cachedPuts, redirectPause
 	leader_id = msg['leader']
 	votedFor = None
 	voted = []
@@ -325,6 +328,7 @@ def yes_sir(msg):
 	for put in cachedPuts:
 		redirect(put)
 	cachedPuts = []
+	cachedPacket = []
 	last = time.time()
 	redirectPause = False
 
@@ -419,10 +423,10 @@ poke = False
 
 while True:
 	ready = select.select([sock], [], [], 0.1)[0]
-	#if leader_id == my_id:
-		#print "Leader is starting new loop. ================================================"
-		#print "Queue lenght: " + str(len(queue))
-		#print "CachedPackets Length: " + str(len(queue))
+	if leader_id == my_id:
+		print "Leader is starting new loop. ================================================"
+		print "Queue lenght: " + str(len(queue))
+		print "CachedPackets Length: " + str(len(queue))
 	
 	if ackTimeout:
 		if clock-ackTimeout >= .02 and leader_id == my_id and votedFor == None:
