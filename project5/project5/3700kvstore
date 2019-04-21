@@ -6,6 +6,12 @@ from datetime import datetime
 # Your ID number
 my_id = sys.argv[1]
 
+# Connect to the network. All messages to/from other replicas and clients will
+# occur over this socket
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+sock.connect(my_id)
+
+
 leader_id = '0001' 
 
 stateMachine = {}
@@ -45,6 +51,14 @@ cachedPuts = []
 
 batchSize = 3 
 
+# Safety Checks
+quorumCount = 0
+redirectCount = 0
+quorumMax = 5
+redirectMax = 3
+
+redirectPause = False
+
 # Time stuff
 clock = None
 last = None
@@ -53,11 +67,6 @@ ackTimeout = None
 
 # The ID numbers of all the other replicas
 replica_ids = sys.argv[2:]
-
-# Connect to the network. All messages to/from other replicas and clients will
-# occur over this socket
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-sock.connect(my_id)
 
 last = 0
 
@@ -115,8 +124,8 @@ def confirm(msg):
 		succ = False
 		#print "Log index mismatch or term mismatch in log\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
 		#print "Log length:" + str(len(log)) + " vs " + str(pIndex)
-		if len(log) > pIndex:
-			print "Previous term: " + str(log[pIndex][2]) + " vs " + msg['prevLogTerm']
+		#if len(log) > pIndex:
+			#print "Previous term: " + str(log[pIndex][2]) + " vs " + msg['prevLogTerm']
 	if succ:
 		log = log[:pIndex + 1]
 		prevLogIndex = pIndex
@@ -130,10 +139,12 @@ def confirm(msg):
 	last = time.time()
 
 def tallyQuorum(msg):
-	global commitIndex, term, quorum, cachedPackets, cachedPuts, lock, last, clock, ackTimeout
+	global commitIndex, term, quorum, cachedPackets, cachedPuts, lock, last, clock, ackTimeout, quorumCount
 	if msg['success']:
 		#Check what commit this is for
 		if msg['term'] == term and msg['leaderCommit'] == commitIndex:
+			print "Got a confirm for : " + str(commitIndex)
+			quorumCount = quorumCount + 1
 			ackTimeout = time.time()
 			if not msg['src'] in quorum:
 				quorum.append(msg['src'])
@@ -150,13 +161,49 @@ def tallyQuorum(msg):
 				cachedPackets = []
 				cachedPuts = []
 				commitIndex = commitIndex + 1
+				quorumCount = 0
 				lock = False
 				quorum = []
 				sendHeartbeat()
+		else:
+			print "Did not match : "
+			print "Term : " + str(term) + " vs " + str(msg['term'])
+			print "Commit: " +str(commitIndex) + " vs " + str(msg['leaderCommit'])
 	else:
 		#Elect new leader here, leader should shutdown/demote itself
 		#print "Need to elect new leader, FAILURE in put\n"
 		return
+
+def selfImpeach():
+	global leader_id, quorumCount, clock, last, quorum, lock, cachedPuts, cachedPackets, entries
+	newLeader = False
+	while not newLeader:
+		rndIndex = random.randint(0,len(replica_ids) - 1)
+		rndLead = replica_ids[rndIndex]
+		if not rndLead in quorum:
+			leader_id = rndLead
+			newLeader = True
+	#print "IMPEAAAAAAAAAAAAACHHHHHHHHHHHH -----------------------------------------------------------------------------------------------"
+	msg = {'src':my_id, 'dst': None, 'type':'impeach', 'term':term, 'leader':leader_id}
+	#print json.dumps(msg, indent=4)
+	for id in quorum:
+		msg['dst'] = id
+		for x in range(3):
+			sendSimple(msg)
+	for put in cachedPuts:
+		redirect(put)
+	for item in queue:
+		redirect(item)	
+	ackTimeout = None
+        last = time.time()
+        clock = last
+        cachedPackets = []
+        cachedPuts = []
+	entries = []
+        quorumCount = 0
+        lock = False
+        quorum = []
+
 def get(text):
  	#text = json.dumps(msg)
  	if redirect(text):
@@ -173,16 +220,24 @@ def get(text):
 			#print "SENDING GET KEY :" + str(key)
 			#print "SENDING GET VAL :" + str(value)
     		else:
-      			print "FAIL - GET - @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
+			#print "SENDING GET KEY :" + str(key)
+                        #print "SENDING GET VAL :" + str(value)
+      			#print "FAIL - GET - @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"
       			packet =  {"src": src, "dst": dst, "leader": leader_id, "type": "fail", "MID": text['MID']}
 	#print json.dumps(packet, indent=4)
 	#print "Get for: " + str(text['MID'])
 	sendSimple(packet)
 
 def redirect(msg):
+	global redirectCount, redirectPause
   	if leader_id == my_id:
     		return False
   	else:
+		redirectCount = redirectCount + 1
+		if redirectCount > redirectMax:
+			print "Redirect pause"
+		 	redirectPause = True	
+			redirectCount = 0	
     		src = msg['dst']
     		dst = msg['src']
     		MID = msg['MID']
@@ -260,7 +315,7 @@ def tally(msg):
 			electionQueue = []
 
 def yes_sir(msg):
-	global leader_id, votedFor, term, electionQueue, cachedPuts
+	global leader_id, votedFor, term, electionQueue, cachedPuts, redirectPause
 	leader_id = msg['leader']
 	votedFor = None
 	voted = []
@@ -273,10 +328,12 @@ def yes_sir(msg):
 		redirect(put)
 	cachedPuts = []
 	last = time.time()
+	redirectPause = False
 
 def handleMessage(msg):
 	global queue, last, term, leader_id
-	if msg['type'] == 'put':
+	print "RECEIVED : " + json.dumps(msg, indent=8)
+	if msg['type'] == 'put' and not redirectPause:
 			if not lock:
 				if len(queue) > 0:
 					queue.append(msg)
@@ -296,9 +353,10 @@ def handleMessage(msg):
 		#TODO: Make this a switch case
 		if msg['type'] == 'confirm':
 			tallyQuorum(msg)	
-		elif msg['type'] == 'get':
+		elif msg['type'] == 'get' and not redirectPause:
 			get(msg)
 		elif msg['type'] == 'append':
+			redirectPause = False
 			confirm(msg)
 		elif msg['type'] == 'election':
 			vote(msg)
@@ -313,6 +371,10 @@ def handleMessage(msg):
 		elif msg['type'] == 'beat':
 			#print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
 			last = time.time()
+		elif msg['type'] == 'impeach':
+			print "RECEIVED IMPEACH"
+			if leader_id == msg['src'] and term == msg['term']:
+				leader_id = msg['leader']
 	#print "Queue so far: " + str(queue)
 
 def electionHandleMessage(msg):
@@ -342,31 +404,40 @@ def electionHandleMessage(msg):
 			yes_sir(msg)
                 	#print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
                		last = time.time()
+	elif msg['type'] == 'impeach':
+		#print "RECEIVED IMPEACH"
+                if leader_id == msg['src'] and term == msg['term']:
+			term = -1
+                        yes_sir(msg)
 
-waitTime = random.uniform(.250,.400)
+waitTime = random.uniform(.300,.450)
 halfWaitTime = (waitTime / 2) - .05
-print "Wait time for " + str(my_id) + " is :" + str(waitTime)
+#print "Wait time for " + str(my_id) + " is :" + str(waitTime)
 time.sleep(1.4)
 clock = time.time()
 last = clock + 1
-print "Clock: " + str(clock)
-
+#print "Clock: " + str(clock)
+poke = False
 
 while True:
 	ready = select.select([sock], [], [], 0.1)[0]
-	if leader_id == my_id:
-		print "Leader is starting new loop."
+	#if leader_id == my_id:
+		#print "Leader is starting new loop. ================================================"
+		#print "Queue lenght: " + str(len(queue))
+		#print "CachedPackets Length: " + str(len(queue))
 	
 	if ackTimeout:
 		if clock-ackTimeout >= .02 and leader_id == my_id and votedFor == None:
 			append(entries)
-			
+	if quorumCount >= quorumMax:
+		selfImpeach()	
 
 	if sock in ready:
 		msg_raw = sock.recv(32768)
 		msg = None
 
-		if len(msg_raw) == 0: 
+		if len(msg_raw) == 0:
+			print "EMTPY" 
 			if len(queue) <= 0:
 				if len(entries) == 0:
 					continue
@@ -393,17 +464,18 @@ while True:
 
 	clock = time.time()
 	diff = clock-last
-	if diff >= .055 and leader_id == my_id:
+	if diff >= .095 and leader_id == my_id:
 		#if entries:
 		#	append(entries)
 		#else:
 		sendHeartbeat()
 		last=clock
 	
-	if diff > halfWaitTime and diff < waitTime and leader_id != my_id:
+	if diff > halfWaitTime and diff < waitTime and leader_id != my_id and not poke:
 		msg = {'src': my_id, 'dst': leader_id, 'leader': leader_id, 'type': 'poke', 'term': term}
 		sendSimple(msg)
 		sendSimple(msg)
+		poke = True
 
 
 	if diff > waitTime and leader_id != my_id and votedFor == None:
