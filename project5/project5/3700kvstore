@@ -241,17 +241,15 @@ def redirect(msg):
     		src = msg['dst']
     		dst = msg['src']
     		MID = msg['MID']
-    		packet = {"src": src, "dst": dst, "leader": leader_id, "type": "redirect", "MID": MID}
-    		print "REDIRECTING: ##################################################"
+    		packet = {"src": src, "dst": dst, "leader": leader_id, "type": "redirect", "MID": msg['MID']}
+    		print "REDIRECTING: ##################################################" + str(MID)
     		sendSimple(packet)
   		return True
 
 def sendSimple(msg):
   	global msg_num
   	sock.send(json.dumps(msg))
-  	if msg['type'] != 'redirect' and msg['type'] != 'fail':
-		msg_num = msg_num + 1
-		print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ TIME: " + str(clock)  + "\n" + json.dumps(msg, indent=4)
+	print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ TIME: " + str(clock)  + "\n" + json.dumps(msg, indent=4)
   	msg_num = msg_num + 1
   
 def sendAll(msg):
@@ -331,7 +329,7 @@ def yes_sir(msg):
 	redirectPause = False
 
 def handleMessage(msg):
-	global queue, last, term, leader_id
+	global queue, last, term, leader_id, redirectPause
 	print "RECEIVED : " + json.dumps(msg, indent=8)
 	if msg['type'] == 'put' and not redirectPause:
 			if not lock:
