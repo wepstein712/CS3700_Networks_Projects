@@ -55,7 +55,7 @@ batchSize = 3
 quorumCount = 0
 redirectCount = 0
 quorumMax = 5
-redirectMax = 3
+redirectMax = 15
 
 redirectPause = False
 
@@ -90,6 +90,10 @@ def put(text):
 		log.append({key: val, 'term': term})
 		#Loop here for blocking in the future, make sure to not lock while building a block
 		entries.append([key, val, term, text['MID']])
+		src = text['dst']
+                dst = text['src']
+                packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID']}
+                cachedPackets.append(packet)
 		if len(entries) >= batchSize:
 			lock = True
 			if len(log) > batchSize:
@@ -101,10 +105,6 @@ def put(text):
 			
 			append(entries)
 			entries = []
-    		src = text['dst']
-    		dst = text['src']
-    		packet = {"src": src, "dst": dst, "leader": leader_id, "type": "ok", "MID": text['MID']}
-		cachedPackets.append(packet)
 
 def append(ents):
 	#Args: term, leader_id, prevLogIndex, prevLogTerm, entries[], leaderCommit, src, dst, type
@@ -143,13 +143,13 @@ def tallyQuorum(msg):
 	if msg['success']:
 		#Check what commit this is for
 		if msg['term'] == term and msg['leaderCommit'] == commitIndex:
-			print "Got a confirm for : " + str(commitIndex)
+			#print "Got a confirm for : " + str(commitIndex)
 			quorumCount = quorumCount + 1
 			ackTimeout = time.time()
 			if not msg['src'] in quorum:
 				quorum.append(msg['src'])
 			if len(quorum) >= len(replica_ids) / 2:
-				#print "Commiting packet :" + str(quorum) + " all agreed\n"
+				print "Commiting packet :" + str(quorum) + " all agreed\n"
 				#print json.dumps(cachedPacket, indent=4)
 				for pack in cachedPackets:
 					sendSimple(pack)
@@ -160,7 +160,7 @@ def tallyQuorum(msg):
 				clock = last
 				cachedPackets = []
 				cachedPuts = []
-				commitIndex = commitIndex + 1
+				#commitIndex = commitIndex + 1
 				quorumCount = 0
 				lock = False
 				quorum = []
@@ -183,9 +183,9 @@ def selfImpeach():
 		if not rndLead in quorum:
 			leader_id = rndLead
 			newLeader = True
-	#print "IMPEAAAAAAAAAAAAACHHHHHHHHHHHH -----------------------------------------------------------------------------------------------"
+	print "IMPEAAAAAAAAAAAAACHHHHHHHHHHHH -----------------------------------------------------------------------------------------------"
 	msg = {'src':my_id, 'dst': None, 'type':'impeach', 'term':term, 'leader':leader_id}
-	#print json.dumps(msg, indent=4)
+	print json.dumps(msg, indent=4)
 	for id in quorum:
 		msg['dst'] = id
 		for x in range(3):
@@ -245,21 +245,21 @@ def redirect(msg):
     		dst = msg['src']
     		MID = msg['MID']
     		packet = {"src": src, "dst": dst, "leader": leader_id, "type": "redirect", "MID": msg['MID']}
-    		print "REDIRECTING: ##################################################" + str(MID)
+    		#print "REDIRECTING: ##################################################" + str(MID)
     		sendSimple(packet)
   		return True
 
 def sendSimple(msg):
   	global msg_num
   	sock.send(json.dumps(msg))
-	print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ TIME: " + str(clock)  + "\n" + json.dumps(msg, indent=4)
+	#print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ TIME: " + str(clock)  + "\n" + json.dumps(msg, indent=4)
   	msg_num = msg_num + 1
   
 def sendAll(msg):
 	for rid in replica_ids:
 		msg['dst'] = rid
 		msg['src'] = my_id
-		print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ TIME: " + str(clock)  + "\n" + json.dumps(msg, indent=4)
+		#print "SENDING:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ TIME: " + str(clock)  + "\n" + json.dumps(msg, indent=4)
 		sock.send(json.dumps(msg))	 
 
 def sendHeartbeat():
@@ -334,8 +334,8 @@ def yes_sir(msg):
 
 def handleMessage(msg):
 	global queue, last, term, leader_id, redirectPause
-	print "RECEIVED : " + json.dumps(msg, indent=8)
-	if msg['type'] == 'put' and not redirectPause:
+	#print "RECEIVED : " + json.dumps(msg, indent=8)
+	if msg['type'] == 'put':# and not redirectPause:
 			if not lock:
 				if len(queue) > 0:
 					queue.append(msg)
@@ -355,7 +355,7 @@ def handleMessage(msg):
 		#TODO: Make this a switch case
 		if msg['type'] == 'confirm':
 			tallyQuorum(msg)	
-		elif msg['type'] == 'get' and not redirectPause:
+		elif msg['type'] == 'get':# and not redirectPause:
 			get(msg)
 		elif msg['type'] == 'append':
 			redirectPause = False
@@ -426,7 +426,7 @@ while True:
 	if leader_id == my_id:
 		print "Leader is starting new loop. ================================================"
 		print "Queue lenght: " + str(len(queue))
-		print "CachedPackets Length: " + str(len(queue))
+		print "CachedPackets Length: " + str(len(cachedPackets))
 	
 	if ackTimeout:
 		if clock-ackTimeout >= .02 and leader_id == my_id and votedFor == None:
@@ -434,7 +434,17 @@ while True:
 	if quorumCount >= quorumMax:
 		selfImpeach()	
 
-	if sock in ready:
+	if len(queue) > 0  and leader_id == my_id and votedFor == None and not lock:
+        	#print "Non-socket message ***************************************************************************"
+                msg = queue[0]
+		print "QUEUE MESSAGE: " + json.dumps(msg, indent=4)
+		if len(queue) > 1:
+			queue = queue[1:]
+		else:
+			queue = []
+                handleMessage(msg)
+
+	elif sock in ready:
 		msg_raw = sock.recv(32768)
 		msg = None
 
@@ -442,11 +452,12 @@ while True:
 			print "EMTPY" 
 			if len(queue) <= 0:
 				if len(entries) == 0:
-					continue
+					continue	
 				else:
 					append(entries)
 					#print "FINAL APPEND"
 		else:
+			#Refresh final send timer
 			msg = json.loads(msg_raw)
 		# Handle special cases of get() and put()
 		if votedFor == None:
@@ -454,18 +465,13 @@ while True:
 		else:
 			electionHandleMessage(msg)
 		#print json.dumps(msg, indent=4)
-	else:
-		if len(queue) > 0 and leader_id == my_id and votedFor == None:
-			#print "Non-socket message ***************************************************************************"
-			msg = queue[0]
-			if len(queue) <= 1:
-				queue = []
-			else:
-				queue = queue[1:]
-			handleMessage(msg)
 
 	clock = time.time()
 	diff = clock-last
+	if cachedPackets and (not lock) and leader_id == my_id and votedFor == None and diff >= .2 and sock in ready:
+		print "Nothing to do, sending cache >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+		append(entries)
+
 	if diff >= .095 and leader_id == my_id:
 		#if entries:
 		#	append(entries)
