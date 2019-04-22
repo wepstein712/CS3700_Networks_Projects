@@ -126,11 +126,16 @@ def confirm(msg):
 			#TODO: Send ask message for log[len(log):]
 			if len(log) > pIndex:
 				print "Previous term: " + str(log[pIndex]['term']) + " vs " + str(msg['prevLogTerm'])
+                        else:
+				print "ASKING FOR MESSAGES"
+                        	askFor(msg, prevLogIndex)
+
 		else:
 			print "^ despite this, term was artificial. Reverting term and saying OK"
 			succ = True
 			term = msg['term']
 	if succ:
+		#was just +1
 		log = log[:pIndex + 1]
 		prevLogIndex = pIndex
 		prevLogTerm = term
@@ -144,6 +149,30 @@ def confirm(msg):
 	packet = {'src':src, 'dst':dst, 'leader': leader_id, 'type': 'confirm', 'success': succ, 'term': term, 'leaderCommit': msg['leaderCommit']}
 	sendSimple(packet)
 	last = time.time()
+
+def askFor(msg, index):
+	packet = {'src':msg['dst'], 'dst':msg['src'], 'leader': leader_id, 'type': 'ask', 'index': index, 'term': term, 'leaderCommit': msg['leaderCommit']}
+        sendSimple(packet)
+
+def sendAskedFor(msg):
+	ents = []
+	for state in log[msg['index']:]:
+		key = state.keys()[0]
+		ents.append([key, state[key], state['term']])
+	packet = {'src': my_id, 'dst': msg['src'], 'leader': my_id, 'type': 'receive', 'term': term, 'prevLogIndex': msg['index'], 'prevLogTerm': prevLogTerm, 'entries': ents, 'leaderCommit': commitIndex}
+	sendSimple(packet)
+
+def updateState(msg):
+	log = log[:msg['prevLogIndex'] + 1]
+        prevLogIndex = msg['prevLogIndex']
+        prevLogTerm = term
+        for entry in msg['entries']:
+        	log.append({entry[0]:entry[1], 'term':entry[2]})
+        	stateMachine[entry[0]] = entry[1]
+        #TODO: Update the stateMachine here based on log
+        prevLogIndex = msg['leaderCommit']
+        prevLogTerm = term
+
 
 def tallyQuorum(msg):
 	global commitIndex, term, quorum, cachedPackets, cachedPuts, lock, last, clock, ackTimeout, quorumCount
@@ -398,6 +427,10 @@ def handleMessage(msg):
 			last = time.time()
 			clock = last
 			elect()
+		elif msg['type'] == 'ask':
+			sendAskedFor(msg)
+		elif msg['type'] == 'receive':
+			updateState(msg)	
 		elif msg['type'] == 'election':
 			vote(msg)
 		elif msg['type'] == 'vote':
@@ -412,7 +445,7 @@ def handleMessage(msg):
 			#print '%s received a Heartbeat from %s' % (msg['dst'], msg['src'])
 			last = time.time()
 		elif msg['type'] == 'impeach':
-			print "RECEIVED IMPEACH"
+			#print "RECEIVED IMPEACH"
 			if leader_id == msg['src'] and term == msg['term']:
 				leader_id = msg['leader']
 	#print "Queue so far: " + str(queue)
@@ -429,6 +462,14 @@ def electionHandleMessage(msg):
                 confirm(msg)
 		last = time.time()
 		clock = last
+	elif msg['type'] == 'ask':
+		if msg['term'] >= term:
+                	yes_sir(msg)
+		sendAskedFor(msg)
+        elif msg['type'] == 'receive':
+		if msg['term'] >= term:
+                        yes_sir(msg)
+        	updateState(msg)
         elif msg['type'] == 'election':
                 vote(msg)
         elif msg['type'] == 'vote':
@@ -492,7 +533,7 @@ while True:
 		msg = None
 
 		if len(msg_raw) == 0:
-			print "EMTPY" 
+			#print "EMTPY" 
 			if len(queue) <= 0:
 				if len(entries) == 0:
 					continue	
@@ -532,8 +573,8 @@ while True:
 	if diff > waitTime and leader_id != my_id and votedFor == None:
 		#print "@ " + str(start-clock)
 		print "Voted for: " + str(votedFor)
-		print str(my_id) + " is running"
-		print "Time diff: " + str(clock-last)
+		#print str(my_id) + " is running"
+		#print "Time diff: " + str(clock-last)
 		clock = time.time()
 		last = clock
 		elect()
